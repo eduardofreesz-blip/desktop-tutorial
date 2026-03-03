@@ -171,10 +171,20 @@ export async function initWA(): Promise<WASocket> {
         const pushName = msg.pushName || "Cliente";
         console.log(`[WhatsApp] Mensagem de ${phone} (${pushName}): ${text.substring(0, 50)}`);
 
-        const reply = await handleBotMessage(phone, pushName, text);
-        if (reply && reply.trim()) {
-          await s.sendMessage(phoneRaw, { text: reply });
-          console.log(`[WhatsApp] Resposta enviada para ${phone}: ${reply.substring(0, 50)}`);
+        const botResponse = await handleBotMessage(phone, pushName, text);
+        if (botResponse) {
+          if (typeof botResponse === "string") {
+            await s.sendMessage(phoneRaw, { text: botResponse });
+          } else {
+            // Tentar enviar com botões/lista, fallback para texto
+            try {
+              await s.sendMessage(phoneRaw, botResponse as any);
+            } catch {
+              await s.sendMessage(phoneRaw, { text: (botResponse as any).text || String(botResponse) });
+            }
+          }
+          const preview = typeof botResponse === "string" ? botResponse.substring(0, 50) : "mensagem interativa";
+          console.log(`[WhatsApp] Resposta para ${phone}: ${preview}`);
         }
       } catch (err: any) {
         console.error("[WhatsApp] Erro ao processar mensagem:", err?.message || err);
@@ -325,7 +335,7 @@ export async function getPairingCode(phoneNumber: string): Promise<string | null
 }
 
 // Bot message handler
-async function handleBotMessage(phone: string, name: string, text: string): Promise<string> {
+async function handleBotMessage(phone: string, name: string, text: string): Promise<string | Record<string, any>> {
   const { prisma } = await import("./db");
   const lower = text.toLowerCase().trim();
 
@@ -346,12 +356,40 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
   let reply = "";
 
   // Menu principal / saudações
-  if (lower === "menu" || lower === "voltar" || lower === "0" || lower.match(/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite|oi!|e ai)$/)) {
+  if (lower === "menu" || lower === "voltar" || lower === "0" || lower.match(/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite|oi!|e ai|opa|eai)$/)) {
     const apps = await prisma.app.findMany({ where: { isActive: true } });
     const appList = apps.map((a, i) => `${i + 1}️⃣ *${a.name}*`).join("\n");
-    reply = `👋 Olá ${name}! Bem-vindo à *Universal Recargas*! 🎯\n\nSomos especializados em códigos de recarga para apps de streaming.\n\n📱 *Apps Disponíveis:*\n${appList}\n\n📌 Digite o *número* ou *nome* do app desejado\n❓ Digite *ajuda* para mais opções`;
-    await saveState(prisma, phone, "MENU", reply);
-    return reply;
+    const menuText = `👋 Olá *${name}*! Bem-vindo à *Universal Recargas*! 🎯\n\nSomos especializados em códigos de recarga para apps de streaming.\n\n📱 *Apps Disponíveis:*\n${appList}\n\n📌 Digite o *número* ou *nome* do app desejado\n\n💰 *preços* - Ver tabela completa\n📦 *pedidos* - Seus pedidos\n❓ *ajuda* - Mais opções`;
+    await saveState(prisma, phone, "MENU", menuText);
+
+    // Tentar enviar como lista interativa
+    try {
+      const sections = [{
+        title: "📱 Apps",
+        rows: apps.map((a, i) => ({
+          title: a.name,
+          rowId: `app_${a.id}`,
+          description: a.description || `App de streaming`,
+        })),
+      }, {
+        title: "⚙️ Opções",
+        rows: [
+          { title: "💰 Ver Preços", rowId: "precos", description: "Tabela completa de preços" },
+          { title: "📦 Meus Pedidos", rowId: "pedidos", description: "Acompanhe suas compras" },
+          { title: "❓ Ajuda", rowId: "ajuda", description: "Central de ajuda" },
+        ],
+      }];
+
+      return {
+        text: menuText,
+        buttonText: "📋 Ver Opções",
+        sections,
+        title: "Universal Recargas",
+        footer: "Escolha uma opção acima 👆",
+      };
+    } catch {
+      return menuText;
+    }
   }
 
   // Ajuda
@@ -395,6 +433,13 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
     return reply;
   }
 
+  // Seleção via lista interativa (app_id)
+  if (lower.startsWith("app_")) {
+    const appId = text.replace("app_", "");
+    const appExists = await prisma.app.findUnique({ where: { id: appId } });
+    if (appExists) return await showAppPlans(prisma, phone, appId);
+  }
+
   // Selecionar app por número
   if (lower.match(/^[1-9]$/)) {
     const apps = await prisma.app.findMany({ where: { isActive: true } });
@@ -412,6 +457,20 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
     return await showAppPlans(prisma, phone, app.id);
   }
 
+  // Seleção via lista interativa (plan type)
+  if (lower.startsWith("plan_")) {
+    const parts = text.split("_");
+    if (parts.length >= 3) {
+      const planType = parts[1];
+      const appId = parts.slice(2).join("_");
+      const plan = await prisma.plan.findFirst({ where: { appId, type: planType, isActive: true } });
+      const appData = await prisma.app.findUnique({ where: { id: appId } });
+      if (plan && appData) {
+        return await createOrder(prisma, phone, name, appData, plan);
+      }
+    }
+  }
+
   // Selecionar plano (mensal, trimestral, anual)
   if (state === "SELECT_PLAN" && lower.match(/^(mensal|trimestral|anual|monthly|quarterly|annual|1|2|3)$/)) {
     const planMap: Record<string, string> = { "1": "monthly", mensal: "monthly", "2": "quarterly", trimestral: "quarterly", "3": "annual", anual: "annual", monthly: "monthly", quarterly: "quarterly", annual: "annual" };
@@ -424,17 +483,7 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
       const plan = await prisma.plan.findFirst({ where: { appId, type: planType, isActive: true } });
       const appData = await prisma.app.findUnique({ where: { id: appId } });
       if (plan && appData) {
-        const order = await prisma.order.create({
-          data: { clientPhone: phone, clientName: name, appId, planId: plan.id, amount: plan.price, status: "pending_payment" },
-        });
-
-        const config = await prisma.config.findMany({ where: { key: { in: ["pix_key", "pix_name"] } } });
-        const pixKey = config.find(c => c.key === "pix_key")?.value || "";
-        const pixName = config.find(c => c.key === "pix_name")?.value || "";
-
-        reply = `✅ *Pedido criado!*\n\n📱 App: *${appData.name}*\n📋 Plano: *${plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n\n💳 *Pagamento via PIX:*\n🔑 Chave: *${pixKey || "Não configurada"}*\n👤 Nome: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n⏱️ Após pagar, envie o comprovante aqui!\n\n📦 ID do Pedido: ${order.id}`;
-        await saveState(prisma, phone, "AWAITING_PAYMENT", reply, { orderId: order.id });
-        return reply;
+        return await createOrder(prisma, phone, name, appData, plan);
       }
     }
   }
@@ -444,7 +493,7 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
   return reply;
 }
 
-async function showAppPlans(prisma: any, phone: string, appId: string): Promise<string> {
+async function showAppPlans(prisma: any, phone: string, appId: string): Promise<string | Record<string, any>> {
   const app = await prisma.app.findUnique({ where: { id: appId }, include: { plans: { where: { isActive: true } } } });
   if (!app) return "App não encontrado.";
 
@@ -452,8 +501,39 @@ async function showAppPlans(prisma: any, phone: string, appId: string): Promise<
   const plans = app.plans.map((p: any, i: number) => `${i + 1}️⃣ *${planLabels[p.type] || p.type}* - R$ ${p.price.toFixed(2)}`).join("\n");
   const codes = await prisma.code.count({ where: { appId, status: "available" } });
 
-  const reply = `📱 *${app.name}*\n${app.description || ""}\n\n💰 *Escolha seu plano:*\n${plans}\n\n✅ ${codes} códigos disponíveis\n\n📌 Digite *mensal*, *trimestral* ou *anual*\n🔙 Digite *menu* para voltar`;
-  await saveState(prisma, phone, "SELECT_PLAN", reply, { appId });
+  const textReply = `📱 *${app.name}*\n${app.description || ""}\n\n💰 *Escolha seu plano:*\n${plans}\n\n✅ ${codes} códigos disponíveis\n\n📌 Digite *mensal*, *trimestral* ou *anual*\n🔙 Digite *menu* para voltar`;
+  await saveState(prisma, phone, "SELECT_PLAN", textReply, { appId });
+
+  // Tentar enviar com botões
+  try {
+    const buttons = app.plans.slice(0, 3).map((p: any) => ({
+      buttonId: `plan_${p.type}_${appId}`,
+      buttonText: { displayText: `${planLabels[p.type] || p.type} - R$ ${p.price.toFixed(2)}` },
+      type: 1,
+    }));
+
+    return {
+      text: `📱 *${app.name}*\n${app.description || ""}\n\n✅ ${codes} códigos disponíveis\n\n💰 Escolha seu plano:`,
+      buttons,
+      footer: "Universal Recargas 🎯",
+      headerType: 1,
+    };
+  } catch {
+    return textReply;
+  }
+}
+
+async function createOrder(prisma: any, phone: string, name: string, app: any, plan: any): Promise<string> {
+  const order = await prisma.order.create({
+    data: { clientPhone: phone, clientName: name, appId: app.id, planId: plan.id, amount: plan.price, status: "pending_payment" },
+  });
+
+  const config = await prisma.config.findMany({ where: { key: { in: ["pix_key", "pix_name"] } } });
+  const pixKey = config.find((c: any) => c.key === "pix_key")?.value || "";
+  const pixName = config.find((c: any) => c.key === "pix_name")?.value || "";
+
+  const reply = `✅ *Pedido Criado com Sucesso!*\n\n📱 App: *${app.name}*\n📋 Plano: *${plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: #${order.id.substring(0, 8)}\n\n━━━━━━━━━━━━━━━\n💳 *PAGAMENTO VIA PIX*\n━━━━━━━━━━━━━━━\n\n🔑 Chave PIX: *${pixKey || "Não configurada"}*\n👤 Titular: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n⏱️ Você tem *30 minutos* para pagar\n📸 Envie o *comprovante* aqui após pagar\n\n🔙 Digite *menu* para voltar`;
+  await saveState(prisma, phone, "AWAITING_PAYMENT", reply, { orderId: order.id });
   return reply;
 }
 
