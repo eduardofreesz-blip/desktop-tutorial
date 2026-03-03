@@ -171,16 +171,10 @@ export async function initWA(): Promise<WASocket> {
         const pushName = msg.pushName || "Cliente";
         console.log(`[WhatsApp] Mensagem de ${phone} (${pushName}): ${text.substring(0, 50)}`);
 
-        // Importar bot logic dinamicamente para evitar circular deps
-        const { processIncomingMessage } = await import("./bot-logic-web");
-        const response = await processIncomingMessage(phone, text);
-
-        if (response) {
-          const replyText = typeof response === "string" ? response : (response as any)?.text || String(response);
-          if (replyText && replyText.trim()) {
-            await s.sendMessage(phoneRaw, { text: replyText });
-            console.log(`[WhatsApp] Resposta enviada para ${phone}: ${replyText.substring(0, 50)}`);
-          }
+        const reply = await handleBotMessage(phone, pushName, text);
+        if (reply && reply.trim()) {
+          await s.sendMessage(phoneRaw, { text: reply });
+          console.log(`[WhatsApp] Resposta enviada para ${phone}: ${reply.substring(0, 50)}`);
         }
       } catch (err: any) {
         console.error("[WhatsApp] Erro ao processar mensagem:", err?.message || err);
@@ -328,6 +322,147 @@ export async function getPairingCode(phoneNumber: string): Promise<string | null
     touchState({ lastError: String(e?.message || e), code: null });
     return null;
   }
+}
+
+// Bot message handler
+async function handleBotMessage(phone: string, name: string, text: string): Promise<string> {
+  const { prisma } = await import("./db");
+  const lower = text.toLowerCase().trim();
+
+  // Salvar mensagem recebida
+  try {
+    await prisma.conversation.create({
+      data: { phoneNumber: phone, clientName: name, message: text, direction: "incoming", state: "MENU" },
+    });
+  } catch {}
+
+  // Buscar estado da conversa
+  const lastConv = await prisma.conversation.findFirst({
+    where: { phoneNumber: phone, direction: "outgoing" },
+    orderBy: { createdAt: "desc" },
+  });
+  const state = lastConv?.state || "MENU";
+
+  let reply = "";
+
+  // Menu principal / saudações
+  if (lower === "menu" || lower === "voltar" || lower === "0" || lower.match(/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite|oi!|e ai)$/)) {
+    const apps = await prisma.app.findMany({ where: { isActive: true } });
+    const appList = apps.map((a, i) => `${i + 1}️⃣ *${a.name}*`).join("\n");
+    reply = `👋 Olá ${name}! Bem-vindo à *Universal Recargas*! 🎯\n\nSomos especializados em códigos de recarga para apps de streaming.\n\n📱 *Apps Disponíveis:*\n${appList}\n\n📌 Digite o *número* ou *nome* do app desejado\n❓ Digite *ajuda* para mais opções`;
+    await saveState(prisma, phone, "MENU", reply);
+    return reply;
+  }
+
+  // Ajuda
+  if (lower === "ajuda" || lower === "help" || lower === "?") {
+    reply = `❓ *Central de Ajuda*\n\n📱 *Comprar:* Digite o nome do app\n📦 *Meus Pedidos:* Digite "pedidos"\n💰 *Preços:* Digite "preços"\n📞 *Atendente:* Digite "atendente"\n🔙 *Menu:* Digite "menu"`;
+    return reply;
+  }
+
+  // Preços
+  if (lower === "preços" || lower === "precos" || lower === "valores" || lower === "planos") {
+    const apps = await prisma.app.findMany({ where: { isActive: true }, include: { plans: { where: { isActive: true } } } });
+    const list = apps.map(a => {
+      const plans = a.plans.map(p => `  💵 ${p.type}: *R$ ${p.price.toFixed(2)}*`).join("\n");
+      return `📱 *${a.name}*\n${plans}`;
+    }).join("\n\n");
+    reply = `💰 *Tabela de Preços:*\n\n${list}\n\n📌 Digite o nome do app para comprar\n🔙 Digite *menu* para voltar`;
+    return reply;
+  }
+
+  // Meus pedidos
+  if (lower === "pedidos" || lower === "meus pedidos" || lower === "status") {
+    const orders = await prisma.order.findMany({
+      where: { clientPhone: phone }, take: 5, orderBy: { createdAt: "desc" },
+      include: { app: true, plan: true },
+    });
+    if (orders.length === 0) {
+      reply = `📦 Você ainda não tem pedidos.\n\n📱 Digite o nome de um app para fazer sua primeira compra!`;
+    } else {
+      const list = orders.map(o => {
+        const status = o.status === "code_sent" ? "✅ Enviado" : o.status === "paid" ? "💰 Pago" : o.status === "pending_payment" ? "⏳ Aguardando pagamento" : "❌ " + o.status;
+        return `• *${o.app.name}* (${o.plan.type}) - R$ ${o.amount.toFixed(2)} - ${status}`;
+      }).join("\n");
+      reply = `📦 *Seus Pedidos:*\n\n${list}\n\n🔙 Digite *menu* para voltar`;
+    }
+    return reply;
+  }
+
+  // Atendente
+  if (lower === "atendente" || lower === "humano" || lower === "pessoa" || lower === "falar com alguem") {
+    reply = `👤 *Modo Atendente*\n\nUm atendente será notificado e responderá em breve.\nEnquanto isso, sinta-se à vontade para perguntar!\n\n🔙 Digite *menu* para voltar ao bot`;
+    return reply;
+  }
+
+  // Selecionar app por número
+  if (lower.match(/^[1-9]$/)) {
+    const apps = await prisma.app.findMany({ where: { isActive: true } });
+    const idx = parseInt(lower) - 1;
+    if (idx >= 0 && idx < apps.length) {
+      return await showAppPlans(prisma, phone, apps[idx].id);
+    }
+  }
+
+  // Selecionar app por nome
+  const app = await prisma.app.findFirst({
+    where: { isActive: true, name: { contains: text, mode: "insensitive" } },
+  });
+  if (app) {
+    return await showAppPlans(prisma, phone, app.id);
+  }
+
+  // Selecionar plano (mensal, trimestral, anual)
+  if (state === "SELECT_PLAN" && lower.match(/^(mensal|trimestral|anual|monthly|quarterly|annual|1|2|3)$/)) {
+    const planMap: Record<string, string> = { "1": "monthly", mensal: "monthly", "2": "quarterly", trimestral: "quarterly", "3": "annual", anual: "annual", monthly: "monthly", quarterly: "quarterly", annual: "annual" };
+    const planType = planMap[lower] || lower;
+
+    const context = lastConv?.context as any;
+    const appId = context?.appId;
+
+    if (appId) {
+      const plan = await prisma.plan.findFirst({ where: { appId, type: planType, isActive: true } });
+      const appData = await prisma.app.findUnique({ where: { id: appId } });
+      if (plan && appData) {
+        const order = await prisma.order.create({
+          data: { clientPhone: phone, clientName: name, appId, planId: plan.id, amount: plan.price, status: "pending_payment" },
+        });
+
+        const config = await prisma.config.findMany({ where: { key: { in: ["pix_key", "pix_name"] } } });
+        const pixKey = config.find(c => c.key === "pix_key")?.value || "";
+        const pixName = config.find(c => c.key === "pix_name")?.value || "";
+
+        reply = `✅ *Pedido criado!*\n\n📱 App: *${appData.name}*\n📋 Plano: *${plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n\n💳 *Pagamento via PIX:*\n🔑 Chave: *${pixKey || "Não configurada"}*\n👤 Nome: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n⏱️ Após pagar, envie o comprovante aqui!\n\n📦 ID do Pedido: ${order.id}`;
+        await saveState(prisma, phone, "AWAITING_PAYMENT", reply, { orderId: order.id });
+        return reply;
+      }
+    }
+  }
+
+  // Mensagem padrão
+  reply = `🤔 Não entendi. Tente:\n\n📱 Nome de um app para comprar\n📦 *pedidos* - Ver seus pedidos\n💰 *preços* - Ver valores\n❓ *ajuda* - Mais opções\n🔙 *menu* - Menu principal`;
+  return reply;
+}
+
+async function showAppPlans(prisma: any, phone: string, appId: string): Promise<string> {
+  const app = await prisma.app.findUnique({ where: { id: appId }, include: { plans: { where: { isActive: true } } } });
+  if (!app) return "App não encontrado.";
+
+  const planLabels: Record<string, string> = { monthly: "Mensal (30 dias)", quarterly: "Trimestral (90 dias)", annual: "Anual (365 dias)" };
+  const plans = app.plans.map((p: any, i: number) => `${i + 1}️⃣ *${planLabels[p.type] || p.type}* - R$ ${p.price.toFixed(2)}`).join("\n");
+  const codes = await prisma.code.count({ where: { appId, status: "available" } });
+
+  const reply = `📱 *${app.name}*\n${app.description || ""}\n\n💰 *Escolha seu plano:*\n${plans}\n\n✅ ${codes} códigos disponíveis\n\n📌 Digite *mensal*, *trimestral* ou *anual*\n🔙 Digite *menu* para voltar`;
+  await saveState(prisma, phone, "SELECT_PLAN", reply, { appId });
+  return reply;
+}
+
+async function saveState(prisma: any, phone: string, state: string, message: string, context?: any) {
+  try {
+    await prisma.conversation.create({
+      data: { phoneNumber: phone, clientName: "Bot", message, direction: "outgoing", state, context: context || {} },
+    });
+  } catch {}
 }
 
 // compat extra: alguns lugares podem importar isso
