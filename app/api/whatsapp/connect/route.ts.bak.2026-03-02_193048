@@ -1,0 +1,22 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+import { NextResponse } from "next/server";
+import { connectWhatsApp, getConnectionStatus } from "@/lib/whatsapp-web";
+
+export async function GET() {
+  await connectWhatsApp();
+  const status = getConnectionStatus();
+
+  return NextResponse.json(
+    {
+      ok: true,
+      status: status.status,
+      qrCode: status.qrCode ?? null,
+      reason: status.reason ?? null,
+      lastChangeAt: status.lastChangeAt,
+    },
+    { headers: { "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate" } }
+  );
+}

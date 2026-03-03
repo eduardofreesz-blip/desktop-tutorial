@@ -1,86 +1,100 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/db';
+import { prisma } from '@/lib/db';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-options';
+
+interface OrderData {
+  id: string;
+  createdAt: Date;
+  status: string;
+  amount: number;
+  clientPhone: string;
+  clientName?: string | null;
+  app?: { name: string } | null;
+  plan?: { type: string } | null;
+}
+
+interface AppData {
+  name: string;
+  _count: { orders: number };
+}
 
 export async function GET() {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+
     const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekStart = new Date(todayStart);
-    weekStart.setDate(weekStart.getDate() - 7);
-    const monthStart = new Date(todayStart);
-    monthStart.setMonth(monthStart.getMonth() - 1);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay());
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const [
-      totalOrders,
-      todayOrders,
-      weekOrders,
-      monthOrders,
-      totalRevenue,
-      todayRevenue,
-      weekRevenue,
-      monthRevenue,
-      totalCustomers,
-      newCustomersMonth,
-      pendingOrders,
-      codesAvailable,
-      codesUsed,
-      recentOrders,
-    ] = await Promise.all([
-      prisma.order.count(),
-      prisma.order.count({ where: { createdAt: { gte: todayStart } } }),
-      prisma.order.count({ where: { createdAt: { gte: weekStart } } }),
-      prisma.order.count({ where: { createdAt: { gte: monthStart } } }),
-      prisma.order.aggregate({ _sum: { amount: true } }),
-      prisma.order.aggregate({ _sum: { amount: true }, where: { createdAt: { gte: todayStart } } }),
-      prisma.order.aggregate({ _sum: { amount: true }, where: { createdAt: { gte: weekStart } } }),
-      prisma.order.aggregate({ _sum: { amount: true }, where: { createdAt: { gte: monthStart } } }),
-      prisma.order.groupBy({ by: ['clientPhone'] }).then(r => r.length),
-      prisma.order.groupBy({ by: ['clientPhone'], where: { createdAt: { gte: monthStart } } }).then(r => r.length),
-      prisma.order.count({ where: { status: 'pending_payment' } }),
-      prisma.code.count({ where: { status: 'available' } }),
-      prisma.code.count({ where: { status: 'used' } }),
-      prisma.order.findMany({
-        take: 10,
-        orderBy: { createdAt: 'desc' },
-        include: { app: true, plan: true },
-      }),
-    ]);
-
-    const topApps = await prisma.order.groupBy({
-      by: ['appId'],
-      _count: { id: true },
-      orderBy: { _count: { id: 'desc' } },
-      take: 5,
+    // Buscar todos os pedidos de uma vez e calcular métricas
+    const allOrders = await prisma.order.findMany({
+      include: { app: true, plan: true }
     });
 
-    const topAppsWithNames = await Promise.all(
-      topApps.map(async (item) => {
-        const app = await prisma.app.findUnique({ where: { id: item.appId } });
-        return { name: app?.name || 'Desconhecido', orders: item._count.id };
-      })
-    );
+    const apps = await prisma.app.findMany({
+      include: { _count: { select: { orders: true } } }
+    });
 
-    const chartData = [];
-    for (let i = 29; i >= 0; i--) {
-      const date = new Date(todayStart);
-      date.setDate(date.getDate() - i);
-      const nextDate = new Date(date);
-      nextDate.setDate(nextDate.getDate() + 1);
+    const [codesAvailable, codesUsed] = await Promise.all([
+      prisma.code.count({ where: { status: 'available' } }),
+      prisma.code.count({ where: { status: 'used' } })
+    ]);
 
-      const dayOrders = await prisma.order.count({
-        where: { createdAt: { gte: date, lt: nextDate } },
-      });
-      const dayRevenue = await prisma.order.aggregate({
-        _sum: { amount: true },
-        where: { createdAt: { gte: date, lt: nextDate } },
-      });
+    // Calcular métricas a partir dos dados
+    const orders = allOrders as OrderData[];
+    const totalOrders = orders.length;
+    const todayOrders = orders.filter((o: OrderData) => o.createdAt >= today).length;
+    const weekOrders = orders.filter((o: OrderData) => o.createdAt >= startOfWeek).length;
+    const monthOrders = orders.filter((o: OrderData) => o.createdAt >= startOfMonth).length;
 
-      chartData.push({
-        date: date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
-        orders: dayOrders,
-        revenue: dayRevenue._sum.amount || 0,
-      });
-    }
+    const completedOrders = orders.filter((o: OrderData) => o.status === 'code_sent');
+    const totalRevenue = completedOrders.reduce((sum: number, o: OrderData) => sum + o.amount, 0);
+    const todayRevenue = completedOrders.filter((o: OrderData) => o.createdAt >= today).reduce((sum: number, o: OrderData) => sum + o.amount, 0);
+    const weekRevenue = completedOrders.filter((o: OrderData) => o.createdAt >= startOfWeek).reduce((sum: number, o: OrderData) => sum + o.amount, 0);
+    const monthRevenue = completedOrders.filter((o: OrderData) => o.createdAt >= startOfMonth).reduce((sum: number, o: OrderData) => sum + o.amount, 0);
+
+    const uniqueCustomers = new Set(orders.map((o: OrderData) => o.clientPhone));
+    const totalCustomers = uniqueCustomers.size;
+    const newCustomersMonth = new Set(orders.filter((o: OrderData) => o.createdAt >= startOfMonth).map((o: OrderData) => o.clientPhone)).size;
+
+    const activeOrders = completedOrders.length;
+    const pendingOrders = orders.filter((o: OrderData) => o.status === 'pending_payment').length;
+
+    // Dados diários dos últimos 30 dias
+    const dailyMap: Record<string, { orders: number; revenue: number }> = {};
+    orders.filter((o: OrderData) => o.createdAt >= thirtyDaysAgo).forEach((o: OrderData) => {
+      const date = o.createdAt.toISOString().split('T')[0];
+      if (!dailyMap[date]) dailyMap[date] = { orders: 0, revenue: 0 };
+      dailyMap[date].orders++;
+      if (o.status === 'code_sent') dailyMap[date].revenue += o.amount;
+    });
+
+    const recentOrders = orders
+      .sort((a: OrderData, b: OrderData) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 10);
+
+    // Processar dados para gráficos
+    const chartData = Object.entries(dailyMap)
+      .map(([date, data]: [string, { orders: number; revenue: number }]) => ({
+        date: new Date(date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+        orders: data.orders,
+        revenue: data.revenue
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Apps mais vendidos
+    const appsData = apps as AppData[];
+    const topApps = appsData
+      .map((app: AppData) => ({ name: app.name, orders: app._count.orders }))
+      .sort((a, b) => b.orders - a.orders)
+      .slice(0, 5);
 
     return NextResponse.json({
       stats: {
@@ -88,36 +102,33 @@ export async function GET() {
         todayOrders,
         weekOrders,
         monthOrders,
-        totalRevenue: totalRevenue._sum.amount || 0,
-        todayRevenue: todayRevenue._sum.amount || 0,
-        weekRevenue: weekRevenue._sum.amount || 0,
-        monthRevenue: monthRevenue._sum.amount || 0,
+        totalRevenue,
+        todayRevenue,
+        weekRevenue,
+        monthRevenue,
         totalCustomers,
         newCustomersMonth,
-        activeOrders: todayOrders,
+        activeOrders,
         pendingOrders,
         codesAvailable,
         codesUsed,
-        conversionRate: totalOrders > 0 ? (codesUsed / totalOrders) * 100 : 0,
+        conversionRate: totalOrders > 0 ? ((activeOrders / totalOrders) * 100).toFixed(1) : 0
       },
       chartData,
-      topApps: topAppsWithNames,
-      recentOrders: recentOrders.map((order) => ({
-        id: order.id,
-        clientName: order.clientName || 'Cliente',
-        clientPhone: order.clientPhone,
-        appName: order.app.name,
-        planType: order.plan.type,
-        amount: order.amount,
-        status: order.status,
-        createdAt: order.createdAt.toISOString(),
-      })),
+      topApps,
+      recentOrders: recentOrders.map((o: OrderData) => ({
+        id: o.id,
+        clientName: o.clientName || 'Cliente',
+        clientPhone: o.clientPhone,
+        appName: o.app?.name || 'App',
+        planType: o.plan?.type || 'Plano',
+        amount: o.amount,
+        status: o.status,
+        createdAt: o.createdAt
+      }))
     });
   } catch (error) {
-    console.error('Dashboard API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch dashboard data' },
-      { status: 500 }
-    );
+    console.error('Erro ao buscar dashboard:', error);
+    return NextResponse.json({ error: 'Erro interno' }, { status: 500 });
   }
 }
