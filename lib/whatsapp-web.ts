@@ -352,96 +352,118 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
     orderBy: { createdAt: "desc" },
   });
   const state = lastConv?.state || "MENU";
+  const context = (lastConv?.context as any) || {};
 
-  let reply = "";
+  const hora = new Date().getHours();
+  const saudacao = hora < 12 ? "Bom dia" : hora < 18 ? "Boa tarde" : "Boa noite";
 
-  // Menu principal / saudações
-  if (lower === "menu" || lower === "voltar" || lower === "0" || lower.match(/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite|oi!|e ai|opa|eai)$/)) {
+  // ═══════════════════════════════════
+  // MENU PRINCIPAL / SAUDAÇÕES
+  // ═══════════════════════════════════
+  if (lower === "menu" || lower === "voltar" || lower === "inicio" || lower === "0" || lower.match(/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite|oi!|e ai|opa|eai|opa!|oii|oie|hi|hello|start)$/)) {
     const apps = await prisma.app.findMany({ where: { isActive: true } });
-    const appList = apps.map((a, i) => `${i + 1}️⃣ *${a.name}*`).join("\n");
-    const menuText = `👋 Olá *${name}*! Bem-vindo à *Universal Recargas*! 🎯\n\nSomos especializados em códigos de recarga para apps de streaming.\n\n📱 *Apps Disponíveis:*\n${appList}\n\n📌 Digite o *número* ou *nome* do app desejado\n\n💰 *preços* - Ver tabela completa\n📦 *pedidos* - Seus pedidos\n❓ *ajuda* - Mais opções`;
-    await saveState(prisma, phone, "MENU", menuText);
-
-    // Tentar enviar como lista interativa
-    try {
-      const sections = [{
-        title: "📱 Apps",
-        rows: apps.map((a, i) => ({
-          title: a.name,
-          rowId: `app_${a.id}`,
-          description: a.description || `App de streaming`,
-        })),
-      }, {
-        title: "⚙️ Opções",
-        rows: [
-          { title: "💰 Ver Preços", rowId: "precos", description: "Tabela completa de preços" },
-          { title: "📦 Meus Pedidos", rowId: "pedidos", description: "Acompanhe suas compras" },
-          { title: "❓ Ajuda", rowId: "ajuda", description: "Central de ajuda" },
-        ],
-      }];
-
-      return {
-        text: menuText,
-        buttonText: "📋 Ver Opções",
-        sections,
-        title: "Universal Recargas",
-        footer: "Escolha uma opção acima 👆",
-      };
-    } catch {
-      return menuText;
-    }
+    const appList = apps.map((a, i) => `  ${i + 1}️⃣  *${a.name}*`).join("\n");
+    const reply = `${saudacao}, *${name}*! 👋\n\n🎯 *UNIVERSAL RECARGAS*\n_Códigos de recarga para streaming_\n\n━━━━━━━━━━━━━━━━━━\n📱 *NOSSOS APPS:*\n━━━━━━━━━━━━━━━━━━\n${appList}\n\n━━━━━━━━━━━━━━━━━━\n📌 *Digite o número ou nome do app*\n\n_Outras opções:_\n💰 *preços* → Tabela completa\n📦 *pedidos* → Seus pedidos\n📞 *atendente* → Falar com humano\n❓ *ajuda* → Central de ajuda`;
+    await saveState(prisma, phone, "MENU", reply);
+    return reply;
   }
 
-  // Ajuda
+  // ═══════════════════════════════════
+  // AJUDA
+  // ═══════════════════════════════════
   if (lower === "ajuda" || lower === "help" || lower === "?") {
-    reply = `❓ *Central de Ajuda*\n\n📱 *Comprar:* Digite o nome do app\n📦 *Meus Pedidos:* Digite "pedidos"\n💰 *Preços:* Digite "preços"\n📞 *Atendente:* Digite "atendente"\n🔙 *Menu:* Digite "menu"`;
-    return reply;
+    return `❓ *CENTRAL DE AJUDA*\n\n📱 _Comprar:_\n  → Digite o *nome do app* ou *número*\n  → Escolha o plano\n  → Pague via PIX\n  → Receba seu código!\n\n⌨️ *Comandos:*\n  📋 *menu* → Menu principal\n  💰 *preços* → Tabela de preços\n  📦 *pedidos* → Seus pedidos\n  📞 *atendente* → Falar com humano\n  🔙 *voltar* → Voltar ao menu\n\n💬 Ou simplesmente digite o que precisa!`;
   }
 
-  // Preços
-  if (lower === "preços" || lower === "precos" || lower === "valores" || lower === "planos") {
-    const apps = await prisma.app.findMany({ where: { isActive: true }, include: { plans: { where: { isActive: true } } } });
-    const list = apps.map(a => {
-      const plans = a.plans.map(p => `  💵 ${p.type}: *R$ ${p.price.toFixed(2)}*`).join("\n");
-      return `📱 *${a.name}*\n${plans}`;
-    }).join("\n\n");
-    reply = `💰 *Tabela de Preços:*\n\n${list}\n\n📌 Digite o nome do app para comprar\n🔙 Digite *menu* para voltar`;
-    return reply;
+  // ═══════════════════════════════════
+  // PREÇOS
+  // ═══════════════════════════════════
+  if (lower === "preços" || lower === "precos" || lower === "valores" || lower === "planos" || lower === "tabela") {
+    const apps = await prisma.app.findMany({ where: { isActive: true }, include: { plans: { where: { isActive: true }, orderBy: { price: "asc" } } } });
+    let list = "";
+    for (const a of apps) {
+      const codes = await prisma.code.count({ where: { appId: a.id, status: "available" } });
+      const planLabels: Record<string, string> = { monthly: "Mensal", quarterly: "Trimestral", annual: "Anual" };
+      const plans = a.plans.map(p => `  💵 ${planLabels[p.type] || p.type}: *R$ ${p.price.toFixed(2)}*`).join("\n");
+      list += `\n📱 *${a.name}* ${codes > 0 ? `_(${codes} disponíveis)_` : "_(esgotado)_"}\n${plans}\n`;
+    }
+    return `💰 *TABELA DE PREÇOS*\n━━━━━━━━━━━━━━━━━━${list}\n━━━━━━━━━━━━━━━━━━\n📌 Digite o *nome do app* para comprar\n🔙 *menu* para voltar`;
   }
 
-  // Meus pedidos
-  if (lower === "pedidos" || lower === "meus pedidos" || lower === "status") {
+  // ═══════════════════════════════════
+  // MEUS PEDIDOS
+  // ═══════════════════════════════════
+  if (lower === "pedidos" || lower === "meus pedidos" || lower === "meu pedido" || lower === "compras") {
     const orders = await prisma.order.findMany({
       where: { clientPhone: phone }, take: 5, orderBy: { createdAt: "desc" },
       include: { app: true, plan: true },
     });
     if (orders.length === 0) {
-      reply = `📦 Você ainda não tem pedidos.\n\n📱 Digite o nome de um app para fazer sua primeira compra!`;
-    } else {
-      const list = orders.map(o => {
-        const status = o.status === "code_sent" ? "✅ Enviado" : o.status === "paid" ? "💰 Pago" : o.status === "pending_payment" ? "⏳ Aguardando pagamento" : "❌ " + o.status;
-        return `• *${o.app.name}* (${o.plan.type}) - R$ ${o.amount.toFixed(2)} - ${status}`;
-      }).join("\n");
-      reply = `📦 *Seus Pedidos:*\n\n${list}\n\n🔙 Digite *menu* para voltar`;
+      return `📦 *SEUS PEDIDOS*\n\nVocê ainda não tem pedidos.\n\n🛒 Digite o *nome de um app* para fazer sua primeira compra!\n🔙 *menu* para voltar`;
     }
+    const statusIcons: Record<string, string> = {
+      code_sent: "✅ Código enviado",
+      paid: "💰 Pago - aguardando código",
+      pending_payment: "⏳ Aguardando pagamento",
+      cancelled: "❌ Cancelado",
+    };
+    const list = orders.map((o, i) => {
+      const planLabels: Record<string, string> = { monthly: "Mensal", quarterly: "Trimestral", annual: "Anual" };
+      const date = new Date(o.createdAt).toLocaleDateString("pt-BR");
+      return `${i + 1}. *${o.app.name}* - ${planLabels[o.plan.type] || o.plan.type}\n   💵 R$ ${o.amount.toFixed(2)} | ${statusIcons[o.status] || o.status}\n   📅 ${date}`;
+    }).join("\n\n");
+    return `📦 *SEUS PEDIDOS*\n━━━━━━━━━━━━━━━━━━\n\n${list}\n\n━━━━━━━━━━━━━━━━━━\n🔙 *menu* para voltar`;
+  }
+
+  // ═══════════════════════════════════
+  // ATENDENTE / HUMANO
+  // ═══════════════════════════════════
+  if (lower === "atendente" || lower === "humano" || lower === "pessoa" || lower === "falar com alguem" || lower === "suporte") {
+    await saveState(prisma, phone, "HUMAN_MODE", "", { humanMode: true });
+    return `👤 *MODO ATENDENTE*\n━━━━━━━━━━━━━━━━━━\n\nVocê está falando com um atendente agora.\nAguarde, responderemos em breve! ⏳\n\n_Para voltar ao bot automático:_\n🤖 Digite *bot* ou *menu*`;
+  }
+
+  // Voltar do modo humano
+  if ((lower === "bot" || lower === "menu") && state === "HUMAN_MODE") {
+    const apps = await prisma.app.findMany({ where: { isActive: true } });
+    const appList = apps.map((a, i) => `  ${i + 1}️⃣  *${a.name}*`).join("\n");
+    const reply = `🤖 *Bot ativado!*\n\n📱 *NOSSOS APPS:*\n${appList}\n\n📌 Digite o *número* ou *nome* do app`;
+    await saveState(prisma, phone, "MENU", reply);
     return reply;
   }
 
-  // Atendente
-  if (lower === "atendente" || lower === "humano" || lower === "pessoa" || lower === "falar com alguem") {
-    reply = `👤 *Modo Atendente*\n\nUm atendente será notificado e responderá em breve.\nEnquanto isso, sinta-se à vontade para perguntar!\n\n🔙 Digite *menu* para voltar ao bot`;
-    return reply;
+  // Se está em modo humano, não responde automaticamente
+  if (state === "HUMAN_MODE") {
+    return "";
   }
 
-  // Seleção via lista interativa (app_id)
-  if (lower.startsWith("app_")) {
-    const appId = text.replace("app_", "");
-    const appExists = await prisma.app.findUnique({ where: { id: appId } });
-    if (appExists) return await showAppPlans(prisma, phone, appId);
+  // ═══════════════════════════════════
+  // CUPOM
+  // ═══════════════════════════════════
+  if (lower.startsWith("cupom ") || lower.startsWith("cupom:")) {
+    const code = text.replace(/^cupom[:\s]+/i, "").trim().toUpperCase();
+    const coupon = await prisma.coupon.findFirst({ where: { code, isActive: true } });
+    if (coupon) {
+      const discount = coupon.discountType === "percentage" ? `${coupon.discountValue}%` : `R$ ${coupon.discountValue.toFixed(2)}`;
+      return `🎫 *Cupom válido!*\n\n🏷️ Código: *${coupon.code}*\n💰 Desconto: *${discount}*\n\n📱 Escolha um app e o desconto será aplicado!\n🔙 *menu* para voltar`;
+    }
+    return `❌ Cupom *${code}* não encontrado ou expirado.\n\n🔙 *menu* para voltar`;
   }
 
-  // Selecionar app por número
-  if (lower.match(/^[1-9]$/)) {
+  // ═══════════════════════════════════
+  // COMPROVANTE / PAGAMENTO
+  // ═══════════════════════════════════
+  if (state === "AWAITING_PAYMENT" && (lower.includes("paguei") || lower.includes("pago") || lower.includes("comprovante") || lower.includes("transferi") || lower.includes("enviei") || lower.includes("fiz o pix"))) {
+    const orderId = context?.orderId;
+    if (orderId) {
+      return `📸 *Comprovante recebido!*\n\n✅ Vamos verificar seu pagamento.\n⏱️ Prazo: até *10 minutos*\n\n📦 Pedido: #${String(orderId).substring(0, 8)}\n\nAssim que confirmado, seu código será enviado aqui automaticamente! 🚀\n\n_Se precisar de ajuda:_ *atendente*`;
+    }
+  }
+
+  // ═══════════════════════════════════
+  // SELECIONAR APP POR NÚMERO
+  // ═══════════════════════════════════
+  if (lower.match(/^[1-9]$/) && (state === "MENU" || state === "SELECT_APP")) {
     const apps = await prisma.app.findMany({ where: { isActive: true } });
     const idx = parseInt(lower) - 1;
     if (idx >= 0 && idx < apps.length) {
@@ -449,7 +471,9 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
     }
   }
 
-  // Selecionar app por nome
+  // ═══════════════════════════════════
+  // SELECIONAR APP POR NOME
+  // ═══════════════════════════════════
   const app = await prisma.app.findFirst({
     where: { isActive: true, name: { contains: text, mode: "insensitive" } },
   });
@@ -457,73 +481,68 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
     return await showAppPlans(prisma, phone, app.id);
   }
 
-  // Seleção via lista interativa (plan type)
-  if (lower.startsWith("plan_")) {
-    const parts = text.split("_");
-    if (parts.length >= 3) {
-      const planType = parts[1];
-      const appId = parts.slice(2).join("_");
-      const plan = await prisma.plan.findFirst({ where: { appId, type: planType, isActive: true } });
-      const appData = await prisma.app.findUnique({ where: { id: appId } });
-      if (plan && appData) {
-        return await createOrder(prisma, phone, name, appData, plan);
-      }
-    }
-  }
-
-  // Selecionar plano (mensal, trimestral, anual)
-  if (state === "SELECT_PLAN" && lower.match(/^(mensal|trimestral|anual|monthly|quarterly|annual|1|2|3)$/)) {
+  // ═══════════════════════════════════
+  // SELECIONAR PLANO
+  // ═══════════════════════════════════
+  if (state === "SELECT_PLAN") {
     const planMap: Record<string, string> = { "1": "monthly", mensal: "monthly", "2": "quarterly", trimestral: "quarterly", "3": "annual", anual: "annual", monthly: "monthly", quarterly: "quarterly", annual: "annual" };
-    const planType = planMap[lower] || lower;
+    const planType = planMap[lower];
 
-    const context = lastConv?.context as any;
-    const appId = context?.appId;
-
-    if (appId) {
-      const plan = await prisma.plan.findFirst({ where: { appId, type: planType, isActive: true } });
-      const appData = await prisma.app.findUnique({ where: { id: appId } });
+    if (planType && context?.appId) {
+      const plan = await prisma.plan.findFirst({ where: { appId: context.appId, type: planType, isActive: true } });
+      const appData = await prisma.app.findUnique({ where: { id: context.appId } });
       if (plan && appData) {
         return await createOrder(prisma, phone, name, appData, plan);
       }
     }
+
+    // Se digitou algo que não é plano, mostra os planos de novo
+    if (!lower.match(/^(menu|voltar|ajuda|preços|precos|pedidos|atendente)$/)) {
+      return `❌ Opção inválida.\n\nDigite:\n  1️⃣ *mensal*\n  2️⃣ *trimestral*\n  3️⃣ *anual*\n\n🔙 *menu* para voltar`;
+    }
   }
 
-  // Mensagem padrão
-  reply = `🤔 Não entendi. Tente:\n\n📱 Nome de um app para comprar\n📦 *pedidos* - Ver seus pedidos\n💰 *preços* - Ver valores\n❓ *ajuda* - Mais opções\n🔙 *menu* - Menu principal`;
+  // ═══════════════════════════════════
+  // CANCELAR PEDIDO
+  // ═══════════════════════════════════
+  if (lower === "cancelar" && state === "AWAITING_PAYMENT" && context?.orderId) {
+    await prisma.order.update({ where: { id: context.orderId }, data: { status: "cancelled", cancelledAt: new Date() } });
+    return `❌ *Pedido cancelado.*\n\n📱 Digite *menu* para fazer um novo pedido.`;
+  }
+
+  // ═══════════════════════════════════
+  // MENSAGEM NÃO RECONHECIDA
+  // ═══════════════════════════════════
+  return `Olá *${name}*! 😊\n\nNão entendi sua mensagem. Veja o que posso fazer:\n\n📱 *Comprar* → Digite o nome de um app\n💰 *preços* → Ver tabela de preços\n📦 *pedidos* → Ver suas compras\n📋 *menu* → Menu completo\n❓ *ajuda* → Central de ajuda\n\n_Exemplo: digite "Unitv" para comprar_`;
+}
+
+async function showAppPlans(prisma: any, phone: string, appId: string): Promise<string> {
+  const app = await prisma.app.findUnique({ where: { id: appId }, include: { plans: { where: { isActive: true }, orderBy: { price: "asc" } } } });
+  if (!app) return "❌ App não encontrado. Digite *menu* para voltar.";
+
+  const planLabels: Record<string, string> = { monthly: "Mensal (30 dias)", quarterly: "Trimestral (90 dias)", annual: "Anual (365 dias)" };
+  const planEmojis: Record<string, string> = { monthly: "📅", quarterly: "📆", annual: "🗓️" };
+  const codes = await prisma.code.count({ where: { appId, status: "available" } });
+
+  const plans = app.plans.map((p: any, i: number) => {
+    const label = planLabels[p.type] || p.type;
+    const emoji = planEmojis[p.type] || "📋";
+    const savings = p.type === "quarterly" ? " _💡 Economize!_" : p.type === "annual" ? " _🔥 Melhor custo!_" : "";
+    return `  ${i + 1}️⃣  ${emoji} *${label}*\n      💵 *R$ ${p.price.toFixed(2)}*${savings}`;
+  }).join("\n\n");
+
+  const reply = `📱 *${app.name.toUpperCase()}*\n_${app.description || "App de streaming"}_\n\n━━━━━━━━━━━━━━━━━━\n💰 *ESCOLHA SEU PLANO:*\n━━━━━━━━━━━━━━━━━━\n\n${plans}\n\n━━━━━━━━━━━━━━━━━━\n✅ *${codes}* códigos disponíveis\n\n📌 *Responda com:*\n  → *mensal* ou *1*\n  → *trimestral* ou *2*\n  → *anual* ou *3*\n\n🔙 *menu* para voltar`;
+  await saveState(prisma, phone, "SELECT_PLAN", reply, { appId });
   return reply;
 }
 
-async function showAppPlans(prisma: any, phone: string, appId: string): Promise<string | Record<string, any>> {
-  const app = await prisma.app.findUnique({ where: { id: appId }, include: { plans: { where: { isActive: true } } } });
-  if (!app) return "App não encontrado.";
-
-  const planLabels: Record<string, string> = { monthly: "Mensal (30 dias)", quarterly: "Trimestral (90 dias)", annual: "Anual (365 dias)" };
-  const plans = app.plans.map((p: any, i: number) => `${i + 1}️⃣ *${planLabels[p.type] || p.type}* - R$ ${p.price.toFixed(2)}`).join("\n");
-  const codes = await prisma.code.count({ where: { appId, status: "available" } });
-
-  const textReply = `📱 *${app.name}*\n${app.description || ""}\n\n💰 *Escolha seu plano:*\n${plans}\n\n✅ ${codes} códigos disponíveis\n\n📌 Digite *mensal*, *trimestral* ou *anual*\n🔙 Digite *menu* para voltar`;
-  await saveState(prisma, phone, "SELECT_PLAN", textReply, { appId });
-
-  // Tentar enviar com botões
-  try {
-    const buttons = app.plans.slice(0, 3).map((p: any) => ({
-      buttonId: `plan_${p.type}_${appId}`,
-      buttonText: { displayText: `${planLabels[p.type] || p.type} - R$ ${p.price.toFixed(2)}` },
-      type: 1,
-    }));
-
-    return {
-      text: `📱 *${app.name}*\n${app.description || ""}\n\n✅ ${codes} códigos disponíveis\n\n💰 Escolha seu plano:`,
-      buttons,
-      footer: "Universal Recargas 🎯",
-      headerType: 1,
-    };
-  } catch {
-    return textReply;
-  }
-}
-
 async function createOrder(prisma: any, phone: string, name: string, app: any, plan: any): Promise<string> {
+  // Verificar estoque
+  const available = await prisma.code.count({ where: { appId: app.id, planId: plan.id, status: "available" } });
+  if (available === 0) {
+    return `❌ *Estoque esgotado!*\n\nO plano *${plan.type}* do *${app.name}* está sem estoque no momento.\n\n💡 Tente outro plano ou outro app.\n🔙 *menu* para voltar`;
+  }
+
   const order = await prisma.order.create({
     data: { clientPhone: phone, clientName: name, appId: app.id, planId: plan.id, amount: plan.price, status: "pending_payment" },
   });
@@ -532,7 +551,9 @@ async function createOrder(prisma: any, phone: string, name: string, app: any, p
   const pixKey = config.find((c: any) => c.key === "pix_key")?.value || "";
   const pixName = config.find((c: any) => c.key === "pix_name")?.value || "";
 
-  const reply = `✅ *Pedido Criado com Sucesso!*\n\n📱 App: *${app.name}*\n📋 Plano: *${plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: #${order.id.substring(0, 8)}\n\n━━━━━━━━━━━━━━━\n💳 *PAGAMENTO VIA PIX*\n━━━━━━━━━━━━━━━\n\n🔑 Chave PIX: *${pixKey || "Não configurada"}*\n👤 Titular: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n⏱️ Você tem *30 minutos* para pagar\n📸 Envie o *comprovante* aqui após pagar\n\n🔙 Digite *menu* para voltar`;
+  const planLabels: Record<string, string> = { monthly: "Mensal", quarterly: "Trimestral", annual: "Anual" };
+
+  const reply = `🎉 *PEDIDO CRIADO!*\n━━━━━━━━━━━━━━━━━━\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[plan.type] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: *#${order.id.substring(0, 8)}*\n\n━━━━━━━━━━━━━━━━━━\n💳 *PAGUE VIA PIX:*\n━━━━━━━━━━━━━━━━━━\n\n🔑 Chave: *${pixKey || "Não configurada"}*\n👤 Nome: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n━━━━━━━━━━━━━━━━━━\n\n📸 *Após pagar, envie o comprovante aqui*\n⏱️ Prazo: *30 minutos*\n\n_Digite *cancelar* para cancelar o pedido_\n🔙 *menu* para voltar`;
   await saveState(prisma, phone, "AWAITING_PAYMENT", reply, { orderId: order.id });
   return reply;
 }
