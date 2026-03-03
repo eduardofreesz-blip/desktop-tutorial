@@ -22,7 +22,10 @@ export type WAStatusState = {
 
 const logger = pino({ level: "silent" });
 
-const AUTH_DIR = process.env.WA_AUTH_DIR || path.join(process.cwd(), "wa_auth");
+const AUTH_DIR =
+  process.env.WA_AUTH_DIR ||
+  process.env.WA_SESSION_DIR || // compat com envs antigas
+  path.join(process.cwd(), "wa_auth");
 
 let sock: WASocket | null = null;
 let initPromise: Promise<WASocket> | null = null;
