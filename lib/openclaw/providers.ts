@@ -9,9 +9,12 @@ export interface AIProviderConfig {
 }
 
 export const PROVIDERS = [
-  { id: 'openai', name: 'OpenAI', models: ['gpt-4', 'gpt-3.5-turbo'] },
-  { id: 'anthropic', name: 'Anthropic', models: ['claude-3-opus', 'claude-3-sonnet'] },
-  { id: 'abacus', name: 'Abacus AI', models: ['abacus-chat'] },
+  { id: 'routellm', name: 'RouteLLM (Abacus)', description: 'Já configurado, usa sua conta Abacus', tag: 'Recomendado', models: ['route-llm', 'gpt-4.1', 'gpt-4.1-mini'] },
+  { id: 'google', name: 'Google Gemini', description: 'Gratuito até 60 req/min', tag: 'Gratuito', models: ['gemini-pro', 'gemini-1.5-flash'] },
+  { id: 'deepseek', name: 'DeepSeek', description: '~$0.14/1M tokens', tag: 'Barato', models: ['deepseek-chat', 'deepseek-coder'] },
+  { id: 'openai', name: 'OpenAI', description: 'GPT-4o e outros', tag: 'Premium', models: ['gpt-4o', 'gpt-4', 'gpt-3.5-turbo'] },
+  { id: 'ollama', name: 'Ollama (Local)', description: 'Gratuito, roda na VPS', tag: 'Local', models: ['llama3', 'mistral', 'codellama', 'phi3'] },
+  { id: 'anthropic', name: 'Anthropic', description: 'Claude 3.5 Sonnet', tag: 'Premium', models: ['claude-3-opus', 'claude-3-sonnet', 'claude-3.5-sonnet'] },
 ];
 
 export async function getAIConfig(): Promise<AIProviderConfig | null> {
