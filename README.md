@@ -1,5 +1,31 @@
-# Welcome to GitHub Desktop!
+# Universal Recargas
 
-This is your README. READMEs are where you can communicate what your project is and how to use it.
+Admin dashboard (Next.js 14 App Router) para vender códigos de recarga via WhatsApp.
 
-Write your name on line 6, save it, and then head back to GitHub Desktop.
+## Requisitos
+
+- Node.js 20
+- Yarn
+- PostgreSQL 16
+
+## Rodar localmente
+
+- `yarn dev`
+
+Variáveis mínimas no `.env`:
+
+- `DATABASE_URL`
+- `NEXTAUTH_SECRET`
+- `NEXTAUTH_URL=http://localhost:3000`
+
+Sincronizar schema (sem migrations neste repo):
+
+- `npx prisma db push`
+
+Seed (contas de teste / apps / planos):
+
+- `npx tsx --require dotenv/config scripts/seed.ts`
+
+## Deploy na VPS
+
+Veja o guia completo em `DEPLOY_VPS.md`.
