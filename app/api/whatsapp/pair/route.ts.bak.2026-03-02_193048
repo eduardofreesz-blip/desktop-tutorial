@@ -1,0 +1,28 @@
+import { NextResponse } from "next/server";
+import { getPairingCode } from "@/lib/whatsapp-web";
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const phone = (url.searchParams.get("phone") ?? "").replace(/[^\d]/g, "");
+
+  if (!phone) {
+    return NextResponse.json({ ok: true, phone: "", code: null });
+  }
+
+  // tenta várias vezes porque o Baileys pode demorar a “liberar” o pairing code
+  for (let i = 0; i < 6; i++) {
+    try {
+      const code = await getPairingCode(phone);
+      if (code) return NextResponse.json({ ok: true, phone, code });
+    } catch {
+      // ignora e tenta de novo
+    }
+    await sleep(2000);
+  }
+
+  return NextResponse.json({ ok: true, phone, code: null });
+}

@@ -1,0 +1,269 @@
+// lib/whatsapp-web.ts
+import makeWASocket, {
+  DisconnectReason,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  type WASocket,
+} from "@whiskeysockets/baileys";
+
+let sock: WASocket | null = null;
+let initPromise: Promise<WASocket> | null = null;
+
+// ✅ objeto interno (não use direto nas rotas antigas)
+const waState = {
+  status: "disconnected" as "disconnected" | "connecting" | "connected",
+  phone: "",
+  code: null as string | null,
+  lastError: "",
+};
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function waitForConnection(timeoutMs = 25000) {
+  return new Promise<void>((resolve, reject) => {
+    if (!sock) return reject(new Error("sock not initialized"));
+
+    const t = setTimeout(() => {
+      sock?.ev.off("connection.update", onUpdate);
+      reject(new Error("WA connect timeout"));
+    }, timeoutMs);
+
+    const onUpdate = (u: any) => {
+      if (u?.connection === "open") {
+        clearTimeout(t);
+        sock?.ev.off("connection.update", onUpdate);
+        resolve();
+      }
+      if (u?.connection === "close") {
+        clearTimeout(t);
+        sock?.ev.off("connection.update", onUpdate);
+        reject(new Error("WA connection closed"));
+      }
+    };
+
+    sock.ev.on("connection.update", onUpdate);
+  });
+}
+
+/**
+ * ✅ COMPAT: seu código chama waStatus() como FUNÇÃO
+ */
+export function waStatus() {
+  return {
+    status: waState.status,
+    phone: waState.phone,
+    code: waState.code,
+    // ✅ campos que suas rotas esperam:
+    qrCode: null as string | null,
+    reason: waState.lastError || null,
+    lastChangeAt: Date.now(),
+    lastError: waState.lastError,
+  };
+}
+
+/**
+ * Inicializa WA (singleton)
+ */
+export async function initWA(): Promise<WASocket> {
+  if (sock) return sock;
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    const { state, saveCreds } = await useMultiFileAuthState("./wa_auth");
+    const { version } = await fetchLatestBaileysVersion();
+
+    const s = makeWASocket({
+      auth: state,
+      version,
+      browser: ["UniversalRecargas", "Chrome", "1.0.0"],
+      markOnlineOnConnect: false,
+      syncFullHistory: false,
+    });
+
+    s.ev.on("creds.update", saveCreds);
+
+    s.ev.on("connection.update", (update: any) => {
+      const { connection, lastDisconnect } = update || {};
+
+      if (connection === "connecting") {
+        waState.status = "connecting";
+        waState.lastError = "";
+      }
+
+      if (connection === "open") {
+        waState.status = "connected";
+        waState.lastError = "";
+      }
+
+      if (connection === "close") {
+        waState.status = "disconnected";
+
+        const statusCode =
+          lastDisconnect?.error?.output?.statusCode ??
+          lastDisconnect?.error?.output?.payload?.statusCode;
+
+        const reason =
+          lastDisconnect?.error?.output?.payload?.message ||
+          lastDisconnect?.error?.message ||
+          "unknown";
+
+        waState.lastError = `close: ${reason}${statusCode ? ` (status ${statusCode})` : ""}`;
+
+        const shouldReconnect =
+          statusCode !== DisconnectReason.loggedOut &&
+          statusCode !== 401 &&
+          statusCode !== 403;
+
+        if (shouldReconnect) {
+          setTimeout(() => {
+            sock = null;
+            initPromise = null;
+            void initWA().catch(() => {});
+          }, 1500);
+        } else {
+          sock = null;
+          initPromise = null;
+        }
+      }
+    });
+
+    sock = s;
+    return s;
+  })();
+
+  return initPromise;
+}
+
+/* ============================
+   LEGADO/COMPAT
+============================ */
+
+export async function connectWhatsApp() {
+  return initWA();
+}
+
+export async function disconnectWhatsApp() {
+  try {
+    if (sock) await sock.logout();
+  } finally {
+    sock = null;
+    initPromise = null;
+    waState.status = "disconnected";
+    waState.code = null;
+  }
+}
+
+export function resetBlockState() {
+  waState.code = null;
+  waState.lastError = "";
+}
+
+export function getConnectionStatus() {
+  // alguns lugares importam isso
+  return waStatus();
+}
+
+/**
+ * ✅ faltava no seu build:
+ * /api/whatsapp/clear-session importa clearSession
+ *
+ * Aqui faz um "logout" + zera estado.
+ * (não apaga pasta no disco, mas resolve pra compilar e limpar runtime)
+ */
+export async function clearSession() {
+  await disconnectWhatsApp();
+  resetBlockState();
+}
+
+/* ============================
+   PAIRING
+============================ */
+
+export async function getPairingCode(phoneNumber: string) {
+  const digits = (phoneNumber ?? "").replace(/[^\d]/g, "");
+  if (!digits) return null;
+
+  waState.phone = digits;
+  waState.code = null;
+
+  for (let i = 0; i < 3; i++) {
+    try {
+      await initWA();
+      if (!sock) return null;
+
+      // ✅ correção do 428
+      await waitForConnection(25000);
+
+      // @ts-ignore
+      const code = await sock.requestPairingCode(digits);
+
+      if (code) {
+        waState.code = code;
+        return code;
+      }
+
+      await sleep(1500);
+    } catch (e: any) {
+      waState.lastError = String(e?.message ?? e ?? "");
+      await sleep(2000);
+      sock = null;
+      initPromise = null;
+    }
+  }
+
+  return null;
+}
+
+/* ============================
+   SEND MESSAGE
+============================ */
+
+export async function sendWhatsAppMessage(to: string, text: string): Promise<boolean> {
+  const digits = (to ?? "").replace(/[^\d]/g, "");
+  if (!digits) return false;
+
+  try {
+    await initWA();
+    if (!sock) return false;
+
+    await waitForConnection(25000);
+
+    const jid = `${digits}@s.whatsapp.net`;
+    await sock.sendMessage(jid, { text: text ?? "" });
+    return true;
+  } catch (e: any) {
+    waState.lastError = String(e?.message ?? e ?? "");
+    return false;
+  }
+}
+
+/**
+ * Compat: sendInteractiveMessage (fallback em texto)
+ */
+export async function sendInteractiveMessage(to: string, payload: any) {
+  if (typeof payload === "string") return sendWhatsAppMessage(to, payload);
+
+  const baseText = payload?.text ?? "";
+
+  const buttons = (payload?.buttons ?? []).slice(0, 3);
+  const buttonsText =
+    buttons.length > 0
+      ? `\n\nOpções:\n${buttons.map((b: any, i: number) => `${i + 1}) ${b.title}`).join("\n")}`
+      : "";
+
+  const rows = payload?.listSections?.flatMap((s: any) => s.rows ?? []) ?? [];
+  const listText =
+    rows.length > 0
+      ? `\n\n${payload?.listButtonText ?? "Opções"}:\n${rows
+          .slice(0, 10)
+          .map(
+            (r: any, i: number) =>
+              `${i + 1}) ${r.title}${r.description ? " - " + r.description : ""}`
+          )
+          .join("\n")}`
+      : "";
+
+  return sendWhatsAppMessage(to, `${baseText}${buttonsText}${listText}`.trim() || " ");
+}
