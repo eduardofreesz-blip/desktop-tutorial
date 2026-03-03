@@ -91,16 +91,16 @@ export async function initWA(): Promise<WASocket> {
       const { connection, lastDisconnect, qr } = update || {};
 
       if (qr) {
-        // Converter QR string para imagem data URL
-        try {
-          const QRCode = require('qrcode');
-          const qrDataUrl = await QRCode.toDataURL(qr, { width: 256, margin: 2 });
-          touchState({ qrCode: qrDataUrl, status: "qr_ready" as any });
-          console.log("[WhatsApp] QR Code gerado - escaneie com seu celular");
-        } catch {
-          touchState({ qrCode: qr, status: "qr_ready" as any });
-          console.log("[WhatsApp] QR Code gerado (texto) - escaneie com seu celular");
-        }
+        const QRCode = require('qrcode');
+        QRCode.toDataURL(qr, { width: 256, margin: 2 })
+          .then((qrDataUrl: string) => {
+            touchState({ qrCode: qrDataUrl, status: "qr_ready" as any });
+            console.log("[WhatsApp] QR Code gerado - escaneie com seu celular");
+          })
+          .catch(() => {
+            touchState({ qrCode: qr, status: "qr_ready" as any });
+            console.log("[WhatsApp] QR Code gerado (texto)");
+          });
       }
 
       if (connection === "open") {
