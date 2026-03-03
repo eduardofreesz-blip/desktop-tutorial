@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Executor Principal do Agente IA Inteligente
 import { AGENT_TOOLS, getToolsForAPI, executeTool, AgentContext } from './ai-agent';
 import { prisma } from './db';

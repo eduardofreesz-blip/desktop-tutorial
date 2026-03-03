@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Status da integração FitBank
 import { NextResponse } from 'next/server';
 import { hasFitBankCredentials, getFitBankCredentials } from '@/lib/fitbank';

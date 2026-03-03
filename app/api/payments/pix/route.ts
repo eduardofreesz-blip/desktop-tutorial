@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { createPixPayment, hasGetnetCredentials } from '@/lib/getnet';

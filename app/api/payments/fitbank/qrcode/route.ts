@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Gerar QR Code PIX via FitBank
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';

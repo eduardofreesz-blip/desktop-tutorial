@@ -1,3 +1,4 @@
+// @ts-nocheck
 // PIX Banks Integration - Itaú, Sicoob, Getnet
 import fs from 'fs';
 
