@@ -143,11 +143,47 @@ export async function initWA(): Promise<WASocket> {
         initPromise = null;
 
         if (shouldReconnect) {
-          // pequeno delay pra não loopar agressivo
           setTimeout(() => {
             void initWA().catch(() => {});
           }, 1500);
         }
+      }
+    });
+
+    // Handler de mensagens recebidas
+    s.ev.on("messages.upsert", async (m: any) => {
+      try {
+        const msg = m.messages?.[0];
+        if (!msg || msg.key?.fromMe || !msg.message) return;
+
+        const phoneRaw = msg.key?.remoteJid || "";
+        if (phoneRaw.endsWith("@g.us") || phoneRaw === "status@broadcast") return;
+
+        const phone = phoneRaw.replace("@s.whatsapp.net", "");
+        const text =
+          msg.message?.conversation ||
+          msg.message?.extendedTextMessage?.text ||
+          msg.message?.imageMessage?.caption ||
+          "";
+
+        if (!text.trim()) return;
+
+        const pushName = msg.pushName || "Cliente";
+        console.log(`[WhatsApp] Mensagem de ${phone} (${pushName}): ${text.substring(0, 50)}`);
+
+        // Importar bot logic dinamicamente para evitar circular deps
+        const { processIncomingMessage } = await import("./bot-logic-web");
+        const response = await processIncomingMessage(phone, text);
+
+        if (response) {
+          const replyText = typeof response === "string" ? response : (response as any)?.text || String(response);
+          if (replyText && replyText.trim()) {
+            await s.sendMessage(phoneRaw, { text: replyText });
+            console.log(`[WhatsApp] Resposta enviada para ${phone}: ${replyText.substring(0, 50)}`);
+          }
+        }
+      } catch (err: any) {
+        console.error("[WhatsApp] Erro ao processar mensagem:", err?.message || err);
       }
     });
 
