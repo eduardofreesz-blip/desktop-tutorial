@@ -1,0 +1,272 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x", "debian-openssl-3.0.x"]
+    
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  phone     String?
+  avatar    String?
+  role      String   @default("admin")
+  isActive  Boolean  @default(true)
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  panels    Panel[]
+}
+
+model App {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  logoUrl     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  bannerUrl   String?
+  videoUrl    String?
+  codes       Code[]
+  coupons     Coupon[]
+  orders      Order[]
+  plans       Plan[]
+
+  @@index([isActive])
+}
+
+model Plan {
+  id        String   @id @default(cuid())
+  appId     String
+  type      String
+  price     Float
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  codes     Code[]
+  orders    Order[]
+  app       App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, type])
+  @@index([appId, isActive])
+}
+
+model Code {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  appId         String
+  planId        String
+  status        String    @default("available")
+  usedAt        DateTime?
+  usedBy        String?
+  reservedAt    DateTime?
+  reservedUntil DateTime?
+  createdAt     DateTime  @default(now())
+  app           App       @relation(fields: [appId], references: [id], onDelete: Cascade)
+  plan          Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  orders        Order[]
+
+  @@index([appId, planId, status])
+  @@index([status, reservedUntil])
+}
+
+model Order {
+  id             String    @id @default(cuid())
+  clientPhone    String
+  clientName     String?
+  clientDocument String?
+  appId          String
+  planId         String
+  codeId         String?
+  paymentId      String?
+  status         String    @default("pending_payment")
+  amount         Float
+  createdAt      DateTime  @default(now())
+  paidAt         DateTime?
+  cancelledAt    DateTime?
+  activatedAt    DateTime?
+  expiresAt      DateTime?
+  reminderSent   Boolean   @default(false)
+  app            App       @relation(fields: [appId], references: [id], onDelete: Cascade)
+  code           Code?     @relation(fields: [codeId], references: [id])
+  plan           Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([clientPhone])
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@index([expiresAt, reminderSent])
+  @@index([paymentId])
+}
+
+model Conversation {
+  id          String   @id @default(cuid())
+  phoneNumber String
+  clientName  String   @default("Cliente")
+  message     String
+  direction   String
+  state       String   @default("MENU")
+  context     Json     @default("{}")
+  humanMode   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([phoneNumber, createdAt])
+  @@index([phoneNumber, state])
+  @@index([phoneNumber, humanMode])
+}
+
+model BotMessage {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  title     String
+  content   String   @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Config {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Coupon {
+  id            String             @id @default(cuid())
+  code          String             @unique
+  discountType  String
+  discountValue Float
+  minAmount     Float?
+  maxUses       Int?
+  usedCount     Int                @default(0)
+  validFrom     DateTime           @default(now())
+  validUntil    DateTime?
+  appId         String?
+  planType      String?
+  isActive      Boolean            @default(true)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  app           App?               @relation(fields: [appId], references: [id])
+  redemptions   CouponRedemption[]
+
+  @@index([code, isActive])
+  @@index([validUntil])
+}
+
+model CouponRedemption {
+  id          String   @id @default(cuid())
+  couponId    String
+  orderId     String
+  clientPhone String
+  discount    Float
+  createdAt   DateTime @default(now())
+  coupon      Coupon   @relation(fields: [couponId], references: [id])
+
+  @@index([couponId])
+  @@index([clientPhone])
+}
+
+model Referral {
+  id             String           @id @default(cuid())
+  referrerPhone  String           @unique
+  referrerName   String?
+  referralCode   String           @unique
+  commission     Float            @default(10)
+  totalReferrals Int              @default(0)
+  totalEarnings  Float            @default(0)
+  pendingPayout  Float            @default(0)
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  payouts        ReferralPayout[]
+  referredUsers  ReferredUser[]
+
+  @@index([referralCode])
+}
+
+model ReferredUser {
+  id           String   @id @default(cuid())
+  referralId   String
+  clientPhone  String
+  clientName   String?
+  firstOrderId String?
+  commission   Float    @default(0)
+  status       String   @default("pending")
+  createdAt    DateTime @default(now())
+  referral     Referral @relation(fields: [referralId], references: [id])
+
+  @@unique([referralId, clientPhone])
+  @@index([clientPhone])
+}
+
+model ReferralPayout {
+  id         String    @id @default(cuid())
+  referralId String
+  amount     Float
+  pixKey     String?
+  status     String    @default("pending")
+  paidAt     DateTime?
+  createdAt  DateTime  @default(now())
+  referral   Referral  @relation(fields: [referralId], references: [id])
+
+  @@index([referralId, status])
+}
+
+model DailyMetric {
+  id             String   @id @default(cuid())
+  date           DateTime @unique
+  totalOrders    Int      @default(0)
+  totalRevenue   Float    @default(0)
+  newCustomers   Int      @default(0)
+  messages       Int      @default(0)
+  conversionRate Float    @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([date])
+}
+
+// Sistema de Subpainéis/Subcontas
+model Panel {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  ownerId     String
+  isActive    Boolean  @default(true)
+  expiresAt   DateTime?
+  maxApps     Int      @default(5)
+  maxCodes    Int      @default(1000)
+  commission  Float    @default(0)
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([slug])
+  @@index([ownerId])
+}
+
+// Convites para novos usuários
+model Invite {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  email     String?
+  role      String    @default("user")
+  panelId   String?
+  maxUses   Int       @default(1)
+  usedCount Int       @default(0)
+  expiresAt DateTime?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+
+  @@index([code])
+}
