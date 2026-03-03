@@ -88,7 +88,12 @@ export async function initWA(): Promise<WASocket> {
     s.ev.on("creds.update", saveCreds);
 
     s.ev.on("connection.update", (update: any) => {
-      const { connection, lastDisconnect } = update || {};
+      const { connection, lastDisconnect, qr } = update || {};
+
+      if (qr) {
+        touchState({ qrCode: qr, status: "connecting" });
+        console.log("[WhatsApp] QR Code gerado - escaneie com seu celular");
+      }
 
       if (connection === "open") {
         touchState({
