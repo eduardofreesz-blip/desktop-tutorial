@@ -144,10 +144,8 @@ export async function runAgent(
   const apiKey = process.env.ABACUSAI_API_KEY;
   
   if (!apiKey) {
-    console.error('[AI Agent] API key não configurada');
-    return {
-      message: 'Desculpe, a IA não está configurada corretamente. Por favor, entre em contato com o suporte.'
-    };
+    console.log('[AI Agent] Sem API key - usando processamento local');
+    return localAgentProcess(userMessage, context);
   }
   
   console.log(`[AI Agent] Iniciando para ${context.phoneNumber}: "${userMessage}"`);
@@ -335,7 +333,8 @@ export async function quickAgentResponse(
   const apiKey = process.env.ABACUSAI_API_KEY;
   
   if (!apiKey) {
-    return 'Olá! Como posso ajudar? Digite *menu* para ver as opções.';
+    const result = await localAgentProcess(userMessage, context);
+    return result.message;
   }
   
   try {
@@ -418,6 +417,148 @@ export async function processAdminCommand(
   // Caso contrário, resposta rápida
   const response = await quickAgentResponse(message, context);
   return { message: response };
+}
+
+// Processamento local da ARIA (sem API externa)
+async function localAgentProcess(userMessage: string, context: AgentContext): Promise<AgentResponse> {
+  const lower = userMessage.toLowerCase().trim();
+  const actions: Array<{ tool: string; result: any }> = [];
+
+  // Saudações
+  if (lower.match(/^(oi|olá|ola|hey|hello|bom dia|boa tarde|boa noite|e ai|eai|opa)/)) {
+    const hora = new Date().getHours();
+    const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
+    const stats = await getQuickStats();
+    return {
+      message: `${saudacao}! 👋 Eu sou a **ARIA**, sua assistente inteligente!\n\n📊 **Resumo rápido do sistema:**\n• 📱 ${stats.apps} apps cadastrados\n• 🔑 ${stats.codes} códigos disponíveis\n• 📦 ${stats.orders} pedidos\n• 👥 ${stats.customers} clientes\n• 💰 Faturamento: R$ ${stats.revenue.toFixed(2)}\n\n**O que posso fazer por você?** Peça qualquer coisa! 🚀`
+    };
+  }
+
+  // Status / resumo
+  if (lower.includes('status') || lower.includes('resumo') || lower.includes('como esta') || lower.includes('visão geral') || lower.includes('overview')) {
+    const stats = await getQuickStats();
+    const today = new Date(); today.setHours(0,0,0,0);
+    const todayOrders = await prisma.order.count({ where: { createdAt: { gte: today } } });
+    const todayRevenue = await prisma.order.aggregate({ _sum: { amount: true }, where: { status: 'code_sent', createdAt: { gte: today } } });
+    return {
+      message: `📊 **Status Completo do Sistema**\n\n**Geral:**\n• 📱 Apps: ${stats.apps}\n• 🔑 Códigos disponíveis: ${stats.codes}\n• 📦 Total pedidos: ${stats.orders}\n• 👥 Clientes: ${stats.customers}\n• 💰 Faturamento total: R$ ${stats.revenue.toFixed(2)}\n\n**Hoje:**\n• 📦 Pedidos hoje: ${todayOrders}\n• 💰 Faturamento hoje: R$ ${(todayRevenue._sum.amount || 0).toFixed(2)}\n\n**Estoque por app:**${await getStockSummary()}`,
+      actions
+    };
+  }
+
+  // Listar apps
+  if (lower.includes('app') || lower.includes('aplicativo') || lower.includes('produto')) {
+    const apps = await prisma.app.findMany({
+      include: { plans: true, _count: { select: { codes: true, orders: true } } }
+    });
+    const list = apps.map(a => {
+      const plans = a.plans.map(p => `${p.type}: R$ ${p.price.toFixed(2)}`).join(', ');
+      return `\n📱 **${a.name}** ${a.isActive ? '✅' : '❌'}\n   ${a.description || 'Sem descrição'}\n   Planos: ${plans || 'Nenhum'}\n   Códigos: ${a._count.codes} | Pedidos: ${a._count.orders}`;
+    }).join('\n');
+    return { message: `📱 **Apps Cadastrados (${apps.length}):**${list || '\nNenhum app cadastrado.'}`, actions };
+  }
+
+  // Pedidos
+  if (lower.includes('pedido') || lower.includes('venda') || lower.includes('order')) {
+    const orders = await prisma.order.findMany({
+      take: 10, orderBy: { createdAt: 'desc' },
+      include: { app: true, plan: true }
+    });
+    if (orders.length === 0) return { message: '📦 Nenhum pedido encontrado ainda.\n\nOs pedidos aparecerão aqui quando clientes comprarem pelo WhatsApp!' };
+    const list = orders.map(o =>
+      `• **${o.clientName || o.clientPhone}** - ${o.app.name} (${o.plan.type}) - R$ ${o.amount.toFixed(2)} - ${o.status === 'code_sent' ? '✅ Enviado' : o.status === 'paid' ? '💰 Pago' : o.status === 'pending_payment' ? '⏳ Pendente' : '❌ ' + o.status}`
+    ).join('\n');
+    return { message: `📦 **Últimos Pedidos (${orders.length}):**\n\n${list}`, actions };
+  }
+
+  // Códigos / estoque
+  if (lower.includes('código') || lower.includes('codigo') || lower.includes('estoque') || lower.includes('code')) {
+    return { message: `🔑 **Estoque de Códigos:**${await getStockSummary()}`, actions };
+  }
+
+  // Clientes
+  if (lower.includes('cliente') || lower.includes('customer')) {
+    const customers = await prisma.order.groupBy({
+      by: ['clientPhone', 'clientName'], _count: true, _sum: { amount: true },
+      orderBy: { _count: { clientPhone: 'desc' } }, take: 10
+    });
+    if (customers.length === 0) return { message: '👥 Nenhum cliente encontrado ainda.' };
+    const list = customers.map(c =>
+      `• **${c.clientName || c.clientPhone}** - ${c._count} pedidos - R$ ${(c._sum.amount || 0).toFixed(2)}`
+    ).join('\n');
+    return { message: `👥 **Top Clientes (${customers.length}):**\n\n${list}`, actions };
+  }
+
+  // Faturamento
+  if (lower.includes('faturamento') || lower.includes('receita') || lower.includes('ganho') || lower.includes('dinheiro') || lower.includes('lucro')) {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7);
+    const monthAgo = new Date(today); monthAgo.setMonth(monthAgo.getMonth() - 1);
+    const [total, todayR, weekR, monthR] = await Promise.all([
+      prisma.order.aggregate({ _sum: { amount: true }, where: { status: 'code_sent' } }),
+      prisma.order.aggregate({ _sum: { amount: true }, where: { status: 'code_sent', createdAt: { gte: today } } }),
+      prisma.order.aggregate({ _sum: { amount: true }, where: { status: 'code_sent', createdAt: { gte: weekAgo } } }),
+      prisma.order.aggregate({ _sum: { amount: true }, where: { status: 'code_sent', createdAt: { gte: monthAgo } } }),
+    ]);
+    return {
+      message: `💰 **Relatório de Faturamento:**\n\n📅 Hoje: **R$ ${(todayR._sum.amount || 0).toFixed(2)}**\n📅 Última semana: **R$ ${(weekR._sum.amount || 0).toFixed(2)}**\n📅 Último mês: **R$ ${(monthR._sum.amount || 0).toFixed(2)}**\n📅 Total geral: **R$ ${(total._sum.amount || 0).toFixed(2)}**`,
+    };
+  }
+
+  // Cupons
+  if (lower.includes('cupom') || lower.includes('cupons') || lower.includes('desconto')) {
+    const coupons = await prisma.coupon.findMany({ take: 10, orderBy: { createdAt: 'desc' } });
+    if (coupons.length === 0) return { message: '🎫 Nenhum cupom cadastrado.\n\nVá em **Cupons** no menu lateral para criar cupons de desconto!' };
+    const list = coupons.map(c =>
+      `• **${c.code}** - ${c.discountType === 'percentage' ? c.discountValue + '%' : 'R$ ' + c.discountValue.toFixed(2)} off ${c.isActive ? '✅' : '❌'} (${c.usedCount}/${c.maxUses || '∞'} usos)`
+    ).join('\n');
+    return { message: `🎫 **Cupons (${coupons.length}):**\n\n${list}`, actions };
+  }
+
+  // Ajuda
+  if (lower.includes('ajuda') || lower.includes('help') || lower === '?' || lower.includes('o que voce faz') || lower.includes('o que você faz') || lower.includes('pode fazer')) {
+    return {
+      message: `🤖 **Eu sou a ARIA! Posso fazer tudo isso:**\n\n📊 **Consultas:**\n• "status" - Visão geral do sistema\n• "apps" - Listar aplicativos e planos\n• "pedidos" - Últimos pedidos\n• "códigos" - Estoque de códigos\n• "clientes" - Top clientes\n• "faturamento" - Relatório financeiro\n• "cupons" - Listar cupons\n\n💡 **Dicas:**\n• Pergunte naturalmente: "como estão as vendas?"\n• Peça detalhes: "me mostra os apps"\n• Solicite ações: "quantos códigos temos?"\n\n🔗 Para ações avançadas (criar apps, planos, etc), use os menus do painel lateral!`
+    };
+  }
+
+  // Perguntas sobre vendas
+  if (lower.includes('venda') || lower.includes('vender') || lower.includes('como vender') || lower.includes('me ajude com venda')) {
+    const stats = await getQuickStats();
+    return {
+      message: `💡 **Dicas para suas vendas:**\n\n📱 Você tem **${stats.apps} apps** com **${stats.codes} códigos** disponíveis para vender.\n\n**Como funciona:**\n1. Cliente manda mensagem no WhatsApp\n2. Bot mostra os apps e planos disponíveis\n3. Cliente escolhe e paga via PIX\n4. Você confirma o pagamento em **Pedidos**\n5. Código é enviado automaticamente!\n\n**Para começar:**\n• Configure o WhatsApp na aba **WhatsApp**\n• Configure o PIX em **Configurações**\n• Adicione códigos em **Códigos**\n\nPrecisa de mais ajuda? 🚀`
+    };
+  }
+
+  // Fallback - resposta genérica inteligente
+  return {
+    message: `🤖 Entendi sua mensagem: "${userMessage}"\n\nPosso te ajudar com:\n• 📊 **status** - Ver números do negócio\n• 📱 **apps** - Ver aplicativos\n• 📦 **pedidos** - Ver vendas\n• 🔑 **códigos** - Ver estoque\n• 💰 **faturamento** - Ver receitas\n• ❓ **ajuda** - Ver tudo que posso fazer\n\nO que gostaria de saber? 😊`
+  };
+}
+
+async function getQuickStats() {
+  const [apps, orders, codes, customers, revenue] = await Promise.all([
+    prisma.app.count(),
+    prisma.order.count(),
+    prisma.code.count({ where: { status: 'available' } }),
+    prisma.order.groupBy({ by: ['clientPhone'] }).then(r => r.length),
+    prisma.order.aggregate({ _sum: { amount: true }, where: { status: 'code_sent' } }),
+  ]);
+  return { apps, orders, codes, customers, revenue: revenue._sum.amount || 0 };
+}
+
+async function getStockSummary(): Promise<string> {
+  const apps = await prisma.app.findMany({
+    include: { plans: { include: { _count: { select: { codes: true } } } } }
+  });
+  let summary = '';
+  for (const app of apps) {
+    const planLines = app.plans
+      .map(p => `   • ${p.type}: ${p._count.codes} códigos`)
+      .join('\n');
+    summary += `\n\n📱 **${app.name}:**\n${planLines || '   Sem planos'}`;
+  }
+  return summary || '\nNenhum app cadastrado.';
 }
 
 // Exportar para uso no bot
