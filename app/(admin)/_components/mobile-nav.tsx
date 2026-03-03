@@ -46,6 +46,7 @@ const menuItems = [
   { href: '/referrals', label: 'Indicações', icon: Gift },
   { href: '/reminders', label: 'Lembretes', icon: Bell },
   { href: '/reports', label: 'Relatórios', icon: FileText },
+  { href: '/users', label: 'Usuários', icon: Users },
   { href: '/panels', label: 'Painéis', icon: LayoutDashboard },
   { href: '/settings/payments', label: 'Pagamentos', icon: CreditCard },
   { href: '/profile', label: 'Meu Perfil', icon: Users },

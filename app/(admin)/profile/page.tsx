@@ -31,6 +31,7 @@ export default function ProfilePage() {
   // Form states
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   
   // Password change
   const [currentPassword, setCurrentPassword] = useState('');
@@ -51,6 +52,7 @@ export default function ProfilePage() {
         setProfile(data.user);
         setName(data.user.name);
         setPhone(data.user.phone || '');
+        setNewEmail(data.user.email || '');
       }
     } catch (error) {
       toast.error('Erro ao carregar perfil');
@@ -65,7 +67,7 @@ export default function ProfilePage() {
       const res = await fetch('/api/profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, phone }),
+        body: JSON.stringify({ name, phone, newEmail: newEmail !== profile?.email ? newEmail : undefined }),
       });
       const data = await res.json();
       if (data.success) {
@@ -204,12 +206,16 @@ export default function ProfilePage() {
                       <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="email"
-                        value={profile?.email || ''}
-                        disabled
-                        className="pl-10 bg-muted"
+                        type="email"
+                        value={newEmail}
+                        onChange={(e) => setNewEmail(e.target.value)}
+                        className="pl-10"
+                        placeholder="seu@email.com"
                       />
                     </div>
-                    <p className="text-xs text-muted-foreground">O e-mail não pode ser alterado</p>
+                    <p className="text-xs text-muted-foreground">
+                      {newEmail !== profile?.email ? '⚠️ Você precisará fazer login novamente com o novo email' : 'Altere seu email de acesso'}
+                    </p>
                   </div>
 
                   <div className="space-y-2">

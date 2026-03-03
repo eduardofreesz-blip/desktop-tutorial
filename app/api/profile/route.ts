@@ -42,13 +42,21 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Não autorizado' }, { status: 401 });
     }
 
-    const { name, phone } = await request.json();
+    const { name, phone, newEmail } = await request.json();
+
+    if (newEmail && newEmail !== session.user.email) {
+      const existing = await prisma.user.findUnique({ where: { email: newEmail } });
+      if (existing) {
+        return NextResponse.json({ success: false, error: 'Este email já está em uso' }, { status: 400 });
+      }
+    }
 
     const user = await prisma.user.update({
       where: { email: session.user.email },
       data: {
         name: name || undefined,
         phone: phone || null,
+        ...(newEmail && newEmail !== session.user.email ? { email: newEmail } : {}),
       },
       select: {
         id: true,

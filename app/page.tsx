@@ -123,6 +123,11 @@ export default function LoginPage() {
               >
                 {isLoading ? 'Entrando...' : 'Entrar'}
               </Button>
+              <div className="text-center">
+                <a href="/forgot-password" className="text-sm text-blue-600 hover:text-blue-800 hover:underline">
+                  Esqueceu a senha?
+                </a>
+              </div>
             </form>
           </CardContent>
         </Card>
