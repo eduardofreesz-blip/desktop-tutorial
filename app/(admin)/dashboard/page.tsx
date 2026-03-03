@@ -95,7 +95,9 @@ export default function DashboardPage() {
     try {
       const res = await fetch('/api/dashboard');
       const result = await res.json();
-      setData(result);
+      if (result.stats) {
+        setData(result);
+      }
     } catch (error) {
       console.error('Erro ao buscar dados:', error);
     } finally {
