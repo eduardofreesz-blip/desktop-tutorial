@@ -4,33 +4,41 @@
 
 ### Project overview
 
-**Universal Recargas** is a Next.js 14 (App Router) admin dashboard for selling recharge codes via WhatsApp. It uses PostgreSQL + Prisma, NextAuth (credentials), Tailwind CSS + shadcn/ui, and integrates with WhatsApp (Baileys), Telegram, payment gateways (Getnet, PagSeguro), and AWS S3.
+**Universal Recargas** is a Next.js 14 (App Router) admin dashboard for selling recharge codes via WhatsApp. Tech stack: PostgreSQL + Prisma, NextAuth (credentials), Tailwind CSS + shadcn/ui, Recharts. Integrates with WhatsApp (Baileys), Telegram, payment gateways (Getnet, PagSeguro, FitBank, Itaú, Sicoob), and AWS S3.
 
-### Important caveats
+### Project structure
 
-- **Incomplete upload**: The original code was partially uploaded from a Hostinger VPS. The `app/api/` directory is mostly missing (only `auth/[...nextauth]` and `dashboard` routes exist locally). The `components/`, `scripts/`, and `public/` root-level directories from the VPS were not uploaded. Some pages may 404 due to missing API routes.
-- **`lib/db.ts`** was recreated as a standard Prisma singleton — it was not in the original upload but is imported across many files.
-- **`.yarnrc.yml`** was simplified from the VPS version (removed Hostinger-specific `globalFolder` path). Uses `nodeLinker: node-modules`.
+- `app/(admin)/` — Admin route group (dashboard, orders, codes, apps, settings, etc.)
+- `app/api/` — 76 API route files (CRUD for all entities, webhooks, payments, WhatsApp, Telegram)
+- `app/page.tsx` — Login page
+- `app/register/` — Registration page
+- `components/ui/` — shadcn/ui components
+- `components/theme-provider.tsx` — Theme provider
+- `lib/` — Utilities (db, auth, WhatsApp, S3, AI agent, bot logic)
+- `prisma/schema.prisma` — Database schema (14 models)
+- `scripts/seed.ts` — Seed script for sample data
+- `hooks/` — React hooks (use-toast)
 
 ### Running locally
 
-- **Dev server**: `yarn dev` (runs on port 3000)
+- **Dev server**: `yarn dev` (port 3000)
 - **Lint**: `yarn lint`
 - **Build**: `yarn build`
-- **Database**: PostgreSQL 16 must be running. User `universal_user` with database `universal_recargas`. Run `npx prisma db push` to sync schema.
-- **Test user**: `admin@universal.com` / `admin123` (created manually via SQL insert, password is bcrypt-hashed)
+- **Seed**: `npx tsx --require dotenv/config scripts/seed.ts`
+- **Prisma**: `npx prisma db push` to sync schema, `npx prisma generate` for client
 
-### Database setup (one-time)
+### Database
 
-```bash
-sudo pg_ctlcluster 16 main start
-sudo -u postgres psql -c "CREATE USER universal_user WITH PASSWORD 'UnivRecargas2026!' CREATEDB;"
-sudo -u postgres psql -c "CREATE DATABASE universal_recargas OWNER universal_user;"
-npx prisma db push
-```
+PostgreSQL 16 must be running. Start with `sudo pg_ctlcluster 16 main start`. User `universal_user`, database `universal_recargas`. The `pg_hba.conf` has `md5` auth for this user (not peer).
 
-PostgreSQL `pg_hba.conf` needs `md5` auth for `universal_user` (not peer). This was configured during initial setup.
+### Test accounts
 
-### Environment variables
+- `admin@universalrecargas.com` / `admin123` (from seed)
+- `john@doe.com` / `johndoe123` (from seed)
 
-Copy from `.env.example` or create `.env` with at minimum: `DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL=http://localhost:3000`.
+### Important caveats
+
+- `lib/db.ts` was recreated as a standard Prisma singleton (not in original VPS upload).
+- `.yarnrc.yml` was simplified from VPS (removed Hostinger-specific paths). Uses `nodeLinker: node-modules`.
+- The `(admin)` route group may need a layout.tsx with sidebar — check VPS if pages lack navigation.
+- `.env` must have `DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL=http://localhost:3000`.
