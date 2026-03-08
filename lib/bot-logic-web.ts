@@ -251,57 +251,25 @@ export async function formatMainMenu(clientName: string): Promise<InteractiveMes
   return messages;
 }
 
-// Lista de Apps para compra
+// Lista de Apps para compra - texto com lista (WhatsApp não renderiza botões)
 async function formatAppsList(): Promise<InteractiveMessage> {
   const apps = await getActiveApps();
   
   if (apps.length === 0) {
     return {
-      type: 'buttons',
-      text: '😔 Nenhum app disponível no momento. Volte mais tarde!',
-      buttons: [{ id: '0', title: '🔙 VOLTAR AO MENU' }],
+      type: 'text',
+      text: '😔 Nenhum app disponível no momento. Volte mais tarde!\n\nDigite *0* para voltar ao menu.',
     };
   }
 
-  // Usar lista interativa se houver mais de 3 apps, senão usar botões
-  if (apps.length <= 3) {
-    const buttons = apps.map((app: any, index: number) => {
-      const minPrice = app.plans.length > 0 ? Math.min(...app.plans.map((p: any) => p.price)) : 0;
-      return {
-        id: String(index + 1),
-        title: `${app.name} - R$${minPrice.toFixed(0)}`,
-      };
-    });
-    
-    return {
-      type: 'buttons',
-      text: '📱 *APPS DISPONÍVEIS*\n\n*Clique no app que deseja ativar:*',
-      footer: 'Clique em 0 para voltar ao menu',
-      buttons: [...buttons, { id: '0', title: '🔙 VOLTAR' }].slice(0, 3), // Max 3 botões
-    };
-  }
-
-  // Lista interativa para muitos apps
-  return {
-    type: 'list',
-    text: '📱 *APPS DISPONÍVEIS*\n\n*Clique no botão abaixo para ver os apps:*',
-    footer: '🛒 Universal Recargas',
-    listButtonText: '📲 Ver Apps',
-    listSections: [{
-      title: 'Apps Disponíveis',
-      rows: [
-        ...apps.map((app: any, index: number) => {
-          const minPrice = app.plans.length > 0 ? Math.min(...app.plans.map((p: any) => p.price)) : 0;
-          return {
-            id: String(index + 1),
-            title: app.name,
-            description: `A partir de R$ ${minPrice.toFixed(2)}`,
-          };
-        }),
-        { id: '0', title: '🔙 Voltar ao Menu', description: 'Retornar ao menu principal' }
-      ],
-    }],
-  };
+  const lines = apps.map((app: any, i: number) => {
+    const minPrice = app.plans.length > 0 ? Math.min(...app.plans.map((p: any) => p.price)) : 0;
+    return `${i + 1}️⃣ *${app.name}* - R$ ${minPrice.toFixed(0)}`;
+  });
+  
+  const text = `📱 *APPS DISPONÍVEIS*\n\n*Digite o número do app desejado:*\n\n${lines.join('\n')}\n\n0️⃣ Voltar ao menu`;
+  
+  return { type: 'text', text };
 }
 
 // Filtrar planos válidos
@@ -310,66 +278,25 @@ function filterValidPlans(plans: any[]): any[] {
   return plans.filter((p: any) => validTypes.includes(p.type.toLowerCase()));
 }
 
-// Lista de planos de um app
+// Lista de planos de um app - texto com lista (WhatsApp não renderiza botões)
 function formatPlansList(app: any): InteractiveMessage {
   const validPlans = filterValidPlans(app.plans || []);
   
   if (validPlans.length === 0) {
     return {
-      type: 'buttons',
-      text: `📱 *${app.name}*\n\n⚠️ Nenhum plano disponível no momento.`,
-      buttons: [{ id: '0', title: '🔙 VOLTAR' }],
+      type: 'text',
+      text: `📱 *${app.name}*\n\n⚠️ Nenhum plano disponível no momento.\n\nDigite *0* para voltar.`,
     };
   }
 
-  let headerText = `📱 *${app.name.toUpperCase()}*\n`;
-  if (app.description) {
-    headerText += `${app.description}\n`;
-  }
-  headerText += '\n💳 PIX Copia e Cola • Entrega Automática\n🔒 100% Seguro\n\n*Clique no plano desejado:*';
-
-  // Se tiver 3 ou menos planos, usar botões
-  if (validPlans.length <= 3) {
-    const buttons = validPlans.map((plan: any, index: number) => {
-      const planName = getPlanNameDisplay(plan.type);
-      return {
-        id: String(index + 1),
-        title: `${planName} R$${plan.price.toFixed(0)}`,
-      };
-    });
-
-    return {
-      type: 'buttons',
-      text: headerText,
-      footer: 'Clique em 0 para voltar',
-      buttons: buttons.slice(0, 3), // Max 3 botões
-    };
-  }
-
-  // Se tiver mais de 3 planos, usar lista
-  return {
-    type: 'list',
-    text: headerText,
-    footer: '🛒 Universal Recargas',
-    listButtonText: '📋 Ver Planos',
-    listSections: [{
-      title: 'Planos Disponíveis',
-      rows: [
-        ...validPlans.map((plan: any, index: number) => {
-          const planName = getPlanNameDisplay(plan.type);
-          const emoji = plan.type.toLowerCase().includes('anual') ? '🏆' :
-                        plan.type.toLowerCase().includes('semestral') ? '⭐' :
-                        plan.type.toLowerCase().includes('trimestral') ? '🌟' : '📅';
-          return {
-            id: String(index + 1),
-            title: `${emoji} ${planName}`,
-            description: `R$ ${plan.price.toFixed(2)}`,
-          };
-        }),
-        { id: '0', title: '🔙 Voltar', description: 'Voltar aos apps' }
-      ],
-    }],
-  };
+  const lines = validPlans.map((plan: any, i: number) => {
+    const planName = getPlanNameDisplay(plan.type);
+    return `${i + 1}️⃣ *${planName}* - R$ ${plan.price.toFixed(2)}`;
+  });
+  
+  const text = `📱 *${app.name.toUpperCase()}*\n\n💳 PIX Copia e Cola • Entrega Automática\n🔒 100% Seguro\n\n*Digite o número do plano desejado:*\n\n${lines.join('\n')}\n\n0️⃣ Voltar`;
+  
+  return { type: 'text', text };
 }
 
 // Confirmação de pedido com PIX
@@ -842,8 +769,10 @@ export async function processIncomingMessage(
   // ESTADO: SELECIONANDO APP
   // ==========================================
   if (currentState === ConversationState.SELECTING_APP) {
+    if (text === '0') return formatMainMenu(clientName);
+    
     const apps = await getActiveApps();
-    const appIndex = parseInt(text) - 1;
+    const appIndex = parseInt(text, 10) - 1;
     
     if (appIndex >= 0 && appIndex < apps.length) {
       const selectedApp = apps[appIndex];
@@ -864,11 +793,8 @@ export async function processIncomingMessage(
       return messages;
     }
     
-    // Número inválido
-    return {
-      type: 'text',
-      text: '❌ Opção inválida. Digite o número do app desejado ou *0* para voltar.',
-    };
+    // Número inválido - reenviar lista de apps
+    return await formatAppsList();
   }
 
   // ==========================================
