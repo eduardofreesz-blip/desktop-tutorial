@@ -570,40 +570,7 @@ export async function processIncomingMessage(
     clientName = clientNameOrPlatform;
   }
   
-  // OpenClaw: Verificar se deve usar como motor principal
-  try {
-    // Verificar config se OpenClaw está habilitado como bot principal
-    const openclawConfig = await prisma.config.findUnique({
-      where: { key: 'openclaw_bot_enabled' }
-    });
-    
-    const useOpenClaw = openclawConfig?.value === 'true';
-    
-    if (useOpenClaw) {
-      // Usar OpenClaw como motor principal
-      const { handleWhatsAppMessage } = await import('@/lib/openclaw/whatsapp-admin');
-      const result = await handleWhatsAppMessage(phoneNumber, messageText, clientName);
-      
-      if (result.response) {
-        // Retornar resposta do OpenClaw
-        return {
-          type: 'text',
-          text: result.response
-        };
-      }
-    } else {
-      // Apenas interceptar comandos admin do OpenClaw
-      const { processAdminWhatsAppMessage } = await import('@/lib/openclaw/whatsapp-admin');
-      const openclawResult = await processAdminWhatsAppMessage(phoneNumber, messageText);
-      if (openclawResult.handled) {
-        // Mensagem processada pelo OpenClaw, não continuar
-        return null;
-      }
-    }
-  } catch (e) {
-    console.error('[Bot] Erro OpenClaw:', e);
-    // OpenClaw não disponível, continuar normalmente
-  }
+  // OpenClaw removido do projeto
   
   const text = messageText.trim().toLowerCase();
 
