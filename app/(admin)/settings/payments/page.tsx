@@ -68,7 +68,7 @@ export default function PaymentsSettingsPage() {
         pagseguro: '/api/payments/pagseguro/status',
         itau: '/api/payments/itau/status',
         sicoob: '/api/payments/sicoob/status',
-        mercadopago: '/api/payments/getnet/status',
+        mercadopago: '/api/payments/mercadopago/status',
         fitbank: '/api/payments/fitbank/status',
       };
       
@@ -208,7 +208,7 @@ export default function PaymentsSettingsPage() {
         fitbank: '/api/payments/fitbank/environment',
         itau: '/api/payments/itau/environment',
         sicoob: '/api/payments/sicoob/environment',
-        mercadopago: '/api/payments/getnet/environment',
+        mercadopago: '/api/payments/mercadopago/environment',
       };
       
       const endpoint = endpoints[config.activeProvider] || '/api/payments/getnet/environment';
@@ -252,8 +252,11 @@ export default function PaymentsSettingsPage() {
     { id: 'fitbank', name: 'FitBank', logo: '🔵', description: 'PIX Automático', hasCard: false },
     { id: 'itau', name: 'Itaú', logo: '🧡', description: 'PIX Itaú', hasCard: false },
     { id: 'sicoob', name: 'Sicoob', logo: '💚', description: 'PIX Sicoob', hasCard: false },
-    { id: 'mercadopago', name: 'Mercado Pago', logo: '💙', description: 'Em breve', hasCard: true },
+    { id: 'mercadopago', name: 'Mercado Pago', logo: '💙', description: 'PIX e Cartão', hasCard: true },
   ];
+
+  const getProviderDescription = (provider: (typeof providers)[0]) =>
+    provider.id === 'mercadopago' ? 'PIX e Cartão' : provider.description;
 
   const currentProvider = providers.find(p => p.id === config.activeProvider);
 
@@ -417,7 +420,7 @@ export default function PaymentsSettingsPage() {
                           <span className="text-xl">{provider.logo}</span>
                           <div>
                             <p className="font-semibold">{provider.name}</p>
-                            <p className="text-xs text-muted-foreground">{provider.description}</p>
+                            <p className="text-xs text-muted-foreground">{getProviderDescription(provider)}</p>
                           </div>
                           {config.activeProvider === provider.id && (
                             <Badge className="ml-auto bg-blue-500">Ativo</Badge>
@@ -500,7 +503,7 @@ export default function PaymentsSettingsPage() {
                       <span className="text-2xl">{provider.logo}</span>
                       <div>
                         <p className="font-semibold">{provider.name}</p>
-                        <p className="text-xs text-muted-foreground">{provider.description}</p>
+                        <p className="text-xs text-muted-foreground">{getProviderDescription(provider)}</p>
                       </div>
                     </div>
                     <div className="flex gap-1 flex-wrap">
@@ -809,26 +812,21 @@ export default function PaymentsSettingsPage() {
 
                 {/* Mercado Pago */}
                 {config.activeProvider === 'mercadopago' && (
-                  <>
-                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                      <p className="text-sm text-yellow-700">
-                        <strong>Mercado Pago:</strong> Em breve! Esta integração está em desenvolvimento.
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Access Token</Label>
-                      <Input
-                        type={showSecrets ? 'text' : 'password'}
-                        placeholder="Cole seu Access Token aqui"
-                        value={credentials.clientId}
-                        onChange={(e) => setCredentials({ ...credentials, clientId: e.target.value })}
-                        disabled
-                      />
-                    </div>
-                  </>
+                  <div className="space-y-2">
+                    <Label>Access Token</Label>
+                    <Input
+                      type={showSecrets ? 'text' : 'password'}
+                      placeholder="APP_USR-xxxx (Produção) ou TEST-xxxx (Sandbox)"
+                      value={credentials.clientId}
+                      onChange={(e) => setCredentials({ ...credentials, clientId: e.target.value })}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Obtenha em developers.mercadopago.com. Use token de teste para sandbox.
+                    </p>
+                  </div>
                 )}
 
-                <Button onClick={saveCredentials} disabled={saving || config.activeProvider === 'mercadopago'} className="w-full">
+                <Button onClick={saveCredentials} disabled={saving} className="w-full">
                   <Save className="w-4 h-4 mr-2" />
                   {saving ? 'Salvando...' : 'Salvar Credenciais'}
                 </Button>
@@ -867,6 +865,18 @@ export default function PaymentsSettingsPage() {
                   O webhook avisa automaticamente quando um PIX for pago. O sistema envia o código ao cliente instantaneamente.
                 </p>
               </div>
+
+              {config.activeProvider === 'mercadopago' && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                  <h4 className="font-semibold text-amber-800 mb-2">⚠️ Mercado Pago: Configure o Webhook</h4>
+                  <p className="text-sm text-amber-700 mb-2">
+                    Acesse <a href="https://www.mercadopago.com.br/developers/panel/app" target="_blank" rel="noopener noreferrer" className="underline">developers.mercadopago.com</a> → Sua aplicação → Webhooks.
+                  </p>
+                  <p className="text-sm text-amber-700">
+                    Adicione a URL acima e selecione o evento <strong>Pagamentos</strong>. Sem isso, o código não será enviado automaticamente após o pagamento.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

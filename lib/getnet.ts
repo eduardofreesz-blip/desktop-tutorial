@@ -63,7 +63,7 @@ export async function createPixPayment(
         'seller_id': sellerId || '',
       },
       body: JSON.stringify({
-        amount: Math.round(amount * 100),
+        amount: Math.round(amount),
         currency: 'BRL',
         order_id: orderId,
         customer_id: orderId,
