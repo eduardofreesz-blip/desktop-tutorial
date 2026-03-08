@@ -273,6 +273,30 @@ async function formatAppsList(): Promise<InteractiveMessage> {
   return { type: 'text', text };
 }
 
+// Opções de forma de pagamento (PIX, Cartão, Transferência)
+async function formatPaymentMethodOptions(
+  appName: string,
+  planName: string,
+  price: number,
+  discount: number = 0,
+  originalPrice?: number
+): Promise<string> {
+  const cardEnabled = await getConfig('card_enabled') === 'true';
+  const transferEnabled = await getConfig('transfer_enabled') === 'true';
+  let lines = `📱 *${appName}* - ${planName}\n`;
+  if (discount > 0 && originalPrice) {
+    lines += `💰 *Valor original:* R$ ${originalPrice.toFixed(2)}\n`;
+    lines += `🎁 *Desconto:* R$ ${discount.toFixed(2)}\n`;
+  }
+  lines += `✨ *Valor:* R$ ${price.toFixed(2)}\n\n`;
+  lines += `💳 *ESCOLHA A FORMA DE PAGAMENTO:*\n\n`;
+  lines += `1️⃣ PIX (copia e cola)\n`;
+  if (cardEnabled) lines += `2️⃣ Cartão de crédito\n`;
+  if (transferEnabled) lines += `3️⃣ Transferência bancária\n`;
+  lines += `\n0️⃣ Voltar ao menu`;
+  return lines;
+}
+
 // Filtrar planos válidos
 function filterValidPlans(plans: any[]): any[] {
   const validTypes = ['monthly', 'quarterly', 'semiannual', 'annual', 'mensal', 'trimestral', 'semestral', 'anual'];
@@ -840,22 +864,18 @@ export async function processIncomingMessage(
         };
       }
 
-      // Verificar se cartão está habilitado - mostrar escolha de forma de pagamento
-      const cardEnabled = await getConfig('card_enabled');
-      if (cardEnabled === 'true') {
+      // Verificar se há mais de uma forma de pagamento - mostrar escolha
+      const cardEnabled = await getConfig('card_enabled') === 'true';
+      const transferEnabled = await getConfig('transfer_enabled') === 'true';
+      if (cardEnabled || transferEnabled) {
         await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
           appId: context.appId, 
           planId: selectedPlan.id,
           discount: 0,
         });
         return {
-          type: 'buttons',
-          text: `📱 *${app.name}* - ${getPlanNameDisplay(selectedPlan.type)}\n💰 *Valor:* R$ ${selectedPlan.price.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*`,
-          buttons: [
-            { id: '1', title: '💳 PIX (copia e cola)' },
-            { id: '2', title: '🔗 Cartão de crédito' },
-            { id: '0', title: '🔙 Voltar' },
-          ],
+          type: 'text',
+          text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(selectedPlan.type), selectedPlan.price, 0),
         };
       }
 
@@ -893,21 +913,17 @@ export async function processIncomingMessage(
         return formatMainMenu(clientName);
       }
 
-      const cardEnabled = await getConfig('card_enabled');
-      if (cardEnabled === 'true') {
+      const cardEnabled = await getConfig('card_enabled') === 'true';
+      const transferEnabled = await getConfig('transfer_enabled') === 'true';
+      if (cardEnabled || transferEnabled) {
         await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
           appId: context.appId, 
           planId: context.planId,
           discount: 0,
         });
         return {
-          type: 'buttons',
-          text: `📱 *${app.name}* - ${getPlanNameDisplay(plan.type)}\n💰 *Valor:* R$ ${plan.price.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*`,
-          buttons: [
-            { id: '1', title: '💳 PIX (copia e cola)' },
-            { id: '2', title: '🔗 Cartão de crédito' },
-            { id: '0', title: '🔙 Voltar' },
-          ],
+          type: 'text',
+          text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(plan.type), plan.price, 0),
         };
       }
       
@@ -974,8 +990,9 @@ export async function processIncomingMessage(
       data: { usedCount: { increment: 1 } },
     });
 
-    const cardEnabled = await getConfig('card_enabled');
-    if (cardEnabled === 'true') {
+    const cardEnabled = await getConfig('card_enabled') === 'true';
+    const transferEnabled = await getConfig('transfer_enabled') === 'true';
+    if (cardEnabled || transferEnabled) {
       const finalPrice = Math.max(0, plan.price - discount);
       await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
         appId: context.appId, 
@@ -984,13 +1001,8 @@ export async function processIncomingMessage(
         couponCode: coupon.code,
       });
       return {
-        type: 'buttons',
-        text: `📱 *${app.name}* - ${getPlanNameDisplay(plan.type)}\n💰 *Valor original:* R$ ${plan.price.toFixed(2)}\n🎁 *Desconto:* R$ ${discount.toFixed(2)}\n✨ *Valor final:* R$ ${finalPrice.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*`,
-        buttons: [
-          { id: '1', title: '💳 PIX (copia e cola)' },
-          { id: '2', title: '🔗 Cartão de crédito' },
-          { id: '0', title: '🔙 Voltar' },
-        ],
+        type: 'text',
+        text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(plan.type), finalPrice, discount, plan.price),
       };
     }
 
@@ -1029,10 +1041,25 @@ export async function processIncomingMessage(
       return await createOrderAndSendCardLink(phone, clientName, app, plan, discount, context.couponCode);
     }
 
-    return {
-      type: 'text',
-      text: '❌ Opção inválida. Digite *1* para PIX, *2* para Cartão ou *0* para voltar.',
-    };
+    if (text === '3') {
+      // Transferência bancária
+      const app = await prisma.app.findUnique({
+        where: { id: context.appId },
+        include: { plans: true },
+      });
+      const plan = await prisma.plan.findUnique({ where: { id: context.planId } });
+      if (!app || !plan) return formatMainMenu(clientName);
+      const discount = context.discount ?? 0;
+      return await createOrderAndSendTransferInfo(phone, clientName, app, plan, discount, context.couponCode);
+    }
+
+    const cardEnabled = await getConfig('card_enabled') === 'true';
+    const transferEnabled = await getConfig('transfer_enabled') === 'true';
+    let errMsg = '❌ Opção inválida. Digite *1* para PIX';
+    if (cardEnabled) errMsg += ', *2* para Cartão';
+    if (transferEnabled) errMsg += ', *3* para Transferência';
+    errMsg += ' ou *0* para voltar.';
+    return { type: 'text', text: errMsg };
   }
 
   // ==========================================
@@ -1119,6 +1146,63 @@ async function createOrderAndSendCardLink(
     `🔗 *Clique no link abaixo para pagar com cartão:*\n\n` +
     `${result.checkoutUrl}\n\n` +
     `✨ *Seu código será enviado automaticamente após o pagamento!*\n\n` +
+    `Digite *1* - Ver status do pedido\n` +
+    `Digite *0* - Voltar ao menu`;
+
+  return { type: 'text', text: msg };
+}
+
+// ==========================================
+// CRIAR PEDIDO E ENVIAR DADOS TRANSFERÊNCIA
+// ==========================================
+async function createOrderAndSendTransferInfo(
+  phoneNumber: string,
+  clientName: string,
+  app: any,
+  plan: any,
+  discount: number,
+  couponCode?: string
+): Promise<InteractiveMessage> {
+  const bankName = await getConfig('bank_name');
+  const bankAgency = await getConfig('bank_agency');
+  const bankAccount = await getConfig('bank_account');
+  const bankAccountType = await getConfig('bank_account_type') || 'CPF';
+  const beneficiaryName = await getConfig('beneficiary_name') || 'Universal Recargas';
+
+  if (!bankName || !bankAgency || !bankAccount) {
+    return {
+      type: 'text',
+      text: `❌ *Transferência indisponível*\n\nOs dados bancários não estão configurados. Configure em Configurações > Pagamentos > Transferência.\n\nDigite *1* para PIX ou *0* para voltar.`,
+    };
+  }
+
+  const order = await createOrder(phoneNumber, clientName, app.id, plan.id, discount);
+  if (!order) {
+    return {
+      type: 'text',
+      text: '❌ Erro ao criar pedido. Tente novamente.\n\nDigite *0* para voltar ao menu.',
+    };
+  }
+
+  await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.AWAITING_PAYMENT, { 
+    orderId: order.id,
+    couponCode,
+    discount,
+  });
+
+  const msg = `🏦 *PAGAMENTO VIA TRANSFERÊNCIA*\n\n` +
+    `📱 *App:* ${app.name}\n` +
+    `⏰ *Plano:* ${getPlanNameDisplay(plan.type)}\n` +
+    `💰 *Valor:* R$ ${order.amount.toFixed(2)}\n\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `*DADOS PARA TRANSFERÊNCIA:*\n` +
+    `━━━━━━━━━━━━━━━━━━\n\n` +
+    `🏛️ *Banco:* ${bankName}\n` +
+    `📍 *Agência:* ${bankAgency}\n` +
+    `💳 *Conta:* ${bankAccount}\n` +
+    `📋 *Tipo:* ${bankAccountType}\n` +
+    `👤 *Favorecido:* ${beneficiaryName}\n\n` +
+    `⚠️ *Envie o comprovante* após a transferência para agilizar a confirmação.\n\n` +
     `Digite *1* - Ver status do pedido\n` +
     `Digite *0* - Voltar ao menu`;
 

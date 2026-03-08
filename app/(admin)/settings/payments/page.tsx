@@ -22,6 +22,12 @@ interface PaymentConfig {
   pixName: string;
   activeProvider: string;
   cardEnabled: boolean;
+  transferEnabled: boolean;
+  bankName: string;
+  bankAgency: string;
+  bankAccount: string;
+  bankAccountType: string;
+  beneficiaryName: string;
 }
 
 interface GetnetStatus {
@@ -51,6 +57,12 @@ export default function PaymentsSettingsPage() {
     pixName: '',
     activeProvider: 'getnet',
     cardEnabled: false,
+    transferEnabled: false,
+    bankName: '',
+    bankAgency: '',
+    bankAccount: '',
+    bankAccountType: 'CPF',
+    beneficiaryName: '',
   });
 
   const [credentials, setCredentials] = useState<ProviderCredentials>({
@@ -125,6 +137,12 @@ export default function PaymentsSettingsPage() {
           pixAutoEnabled: data.pix_auto_enabled === 'true',
           activeProvider: data.active_provider || 'getnet',
           cardEnabled: data.card_enabled === 'true',
+          transferEnabled: data.transfer_enabled === 'true',
+          bankName: data.bank_name || '',
+          bankAgency: data.bank_agency || '',
+          bankAccount: data.bank_account || '',
+          bankAccountType: data.bank_account_type || 'CPF',
+          beneficiaryName: data.beneficiary_name || '',
         });
       }
     } catch (error) {
@@ -147,6 +165,12 @@ export default function PaymentsSettingsPage() {
         pix_auto_enabled: config.pixAutoEnabled.toString(),
         active_provider: config.activeProvider,
         card_enabled: config.cardEnabled.toString(),
+        transfer_enabled: config.transferEnabled.toString(),
+        bank_name: config.bankName,
+        bank_agency: config.bankAgency,
+        bank_account: config.bankAccount,
+        bank_account_type: config.bankAccountType,
+        beneficiary_name: config.beneficiaryName,
       };
       
       console.log('Saving config:', configData);
@@ -270,9 +294,10 @@ export default function PaymentsSettingsPage() {
       </div>
 
       <Tabs defaultValue="pix" className="space-y-6">
-        <TabsList className="grid grid-cols-5 w-full max-w-3xl">
+        <TabsList className="grid grid-cols-6 w-full max-w-4xl">
           <TabsTrigger value="pix">PIX</TabsTrigger>
           <TabsTrigger value="card">Cartão</TabsTrigger>
+          <TabsTrigger value="transfer">Transferência</TabsTrigger>
           <TabsTrigger value="gateway">Gateway</TabsTrigger>
           <TabsTrigger value="credentials">Credenciais</TabsTrigger>
           <TabsTrigger value="webhook">Webhook</TabsTrigger>
@@ -472,6 +497,105 @@ export default function PaymentsSettingsPage() {
           <Button onClick={saveConfig} disabled={saving} className="w-full md:w-auto">
             <Save className="w-4 h-4 mr-2" />
             {saving ? 'Salvando...' : 'Salvar Configurações de Cartão'}
+          </Button>
+        </TabsContent>
+
+        {/* Transferência Bancária */}
+        <TabsContent value="transfer" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-emerald-600" />
+                Transferência Bancária
+              </CardTitle>
+              <CardDescription>
+                Exiba os dados bancários para o cliente fazer TED/DOC manualmente. O pagamento será confirmado manualmente em Pedidos.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <p className="font-medium">Ativar Transferência Bancária</p>
+                  <p className="text-sm text-muted-foreground">
+                    Exibir opção de pagamento via transferência no bot
+                  </p>
+                </div>
+                <Switch
+                  checked={config.transferEnabled}
+                  onCheckedChange={(checked) => setConfig({ ...config, transferEnabled: checked })}
+                />
+              </div>
+
+              {config.transferEnabled && (
+                <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Nome do Banco</Label>
+                      <Input
+                        placeholder="Ex: Banco do Brasil, Itaú, Nubank"
+                        value={config.bankName}
+                        onChange={(e) => setConfig({ ...config, bankName: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Agência</Label>
+                      <Input
+                        placeholder="Ex: 1234"
+                        value={config.bankAgency}
+                        onChange={(e) => setConfig({ ...config, bankAgency: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Conta</Label>
+                      <Input
+                        placeholder="Número da conta (com dígito)"
+                        value={config.bankAccount}
+                        onChange={(e) => setConfig({ ...config, bankAccount: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Tipo da Conta</Label>
+                      <Select
+                        value={config.bankAccountType}
+                        onValueChange={(v) => setConfig({ ...config, bankAccountType: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="CPF">CPF</SelectItem>
+                          <SelectItem value="CNPJ">CNPJ</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Nome do Favorecido</Label>
+                    <Input
+                      placeholder="Nome que aparece no extrato"
+                      value={config.beneficiaryName}
+                      onChange={(e) => setConfig({ ...config, beneficiaryName: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="p-4 border rounded-lg space-y-2">
+                <h4 className="font-semibold">Como funciona:</h4>
+                <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
+                  <li>O cliente escolhe transferência e recebe os dados bancários</li>
+                  <li>Após fazer a transferência, confirme manualmente em Pedidos</li>
+                  <li>O código será enviado após a confirmação</li>
+                </ul>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Button onClick={saveConfig} disabled={saving} className="w-full md:w-auto">
+            <Save className="w-4 h-4 mr-2" />
+            {saving ? 'Salvando...' : 'Salvar Configurações'}
           </Button>
         </TabsContent>
 
