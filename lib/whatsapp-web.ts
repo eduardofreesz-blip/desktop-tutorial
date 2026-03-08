@@ -577,52 +577,38 @@ async function createOrder(prisma: any, phone: string, name: string, app: any, p
   const planLabels: Record<string, string> = { monthly: "Mensal", quarterly: "Trimestral", annual: "Anual" };
   const planTypeKey = plan.type.toLowerCase();
 
-  // Tentar gerar PIX automático via PagSeguro
+  // Tentar gerar PIX automático via Mercado Pago
   let pixAutomatico = false;
   let pixCopiaECola = "";
   
-  const pagToken = process.env.PAGSEGURO_TOKEN;
-  const pagEnv = process.env.PAGSEGURO_ENVIRONMENT || "sandbox";
+  const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
-  if (pagToken) {
+  if (mpToken) {
     try {
-      const baseUrl = pagEnv === "production"
-        ? "https://api.pagseguro.com"
-        : "https://sandbox.api.pagseguro.com";
-
-      const pixRes = await fetch(`${baseUrl}/orders`, {
+      const pixRes = await fetch("https://api.mercadopago.com/v1/payments", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${pagToken}`,
+          "Authorization": `Bearer ${mpToken}`,
+          "X-Idempotency-Key": `order-${order.id}`,
         },
         body: JSON.stringify({
-          reference_id: order.id,
-          customer: {
-            name: name || "Cliente",
-            email: "cliente@email.com",
-            tax_id: "00000000000",
-            phones: [{ country: "55", area: phone.substring(0, 2), number: phone.substring(2), type: "MOBILE" }],
+          transaction_amount: plan.price,
+          description: `${app.name} - ${planLabels[planTypeKey] || plan.type}`,
+          payment_method_id: "pix",
+          payer: {
+            email: "cliente@universalrecargas.com",
+            first_name: name || "Cliente",
           },
-          items: [{
-            reference_id: plan.id,
-            name: `${app.name} - ${planLabels[planTypeKey] || plan.type}`,
-            quantity: 1,
-            unit_amount: Math.round(plan.price * 100),
-          }],
-          qr_codes: [{
-            amount: { value: Math.round(plan.price * 100) },
-            expiration_date: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-          }],
-          notification_urls: [`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/webhook/pagseguro`],
+          external_reference: order.id,
+          notification_url: `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/webhook/mercadopago`,
         }),
       });
 
       if (pixRes.ok) {
         const pixData = await pixRes.json();
-        const qrCode = pixData.qr_codes?.[0];
-        pixCopiaECola = qrCode?.text || "";
-        const paymentId = pixData.id;
+        pixCopiaECola = pixData.point_of_interaction?.transaction_data?.qr_code || "";
+        const paymentId = String(pixData.id || "");
 
         if (pixCopiaECola) {
           pixAutomatico = true;
@@ -630,11 +616,11 @@ async function createOrder(prisma: any, phone: string, name: string, app: any, p
             where: { id: order.id },
             data: { paymentId },
           });
-          console.log(`[PIX] QR Code gerado para pedido ${order.id}`);
+          console.log(`[PIX] Mercado Pago - PIX gerado para pedido ${order.id}`);
         }
       } else {
         const errText = await pixRes.text();
-        console.error(`[PIX] Erro PagSeguro: ${pixRes.status} ${errText.substring(0, 200)}`);
+        console.error(`[PIX] Erro Mercado Pago: ${pixRes.status} ${errText.substring(0, 300)}`);
       }
     } catch (err: any) {
       console.error(`[PIX] Erro ao gerar PIX: ${err.message}`);
