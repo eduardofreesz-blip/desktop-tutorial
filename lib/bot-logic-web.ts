@@ -290,10 +290,10 @@ async function formatPaymentMethodOptions(
   }
   lines += `✨ *Valor:* R$ ${price.toFixed(2)}\n\n`;
   lines += `💳 *ESCOLHA A FORMA DE PAGAMENTO:*\n\n`;
-  lines += `1️⃣ PIX (copia e cola)\n`;
-  if (cardEnabled) lines += `2️⃣ Cartão de crédito\n`;
-  if (transferEnabled) lines += `3️⃣ Transferência bancária\n`;
-  lines += `\n0️⃣ Voltar ao menu`;
+  lines += `*Digite 1* - PIX (copia e cola)\n`;
+  if (cardEnabled) lines += `*Digite 2* - Cartão de crédito\n`;
+  if (transferEnabled) lines += `*Digite 3* - Transferência bancária\n`;
+  lines += `\n*Digite 0* - Voltar ao menu`;
   return lines;
 }
 
@@ -850,9 +850,9 @@ export async function processIncomingMessage(
         };
       }
 
-      // Verificar se cupom está habilitado
-      const showCoupon = await getConfig('show_coupon_option');
-      if (showCoupon === 'true') {
+      // Verificar se cupom está habilitado (padrão: true)
+      const showCoupon = (await getConfig('show_coupon_option')) !== 'false';
+      if (showCoupon) {
         await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.ENTERING_COUPON, { 
           appId: context.appId, 
           planId: selectedPlan.id 
@@ -864,23 +864,16 @@ export async function processIncomingMessage(
         };
       }
 
-      // Verificar se há mais de uma forma de pagamento - mostrar escolha
-      const cardEnabled = await getConfig('card_enabled') === 'true';
-      const transferEnabled = await getConfig('transfer_enabled') === 'true';
-      if (cardEnabled || transferEnabled) {
-        await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
-          appId: context.appId, 
-          planId: selectedPlan.id,
-          discount: 0,
-        });
-        return {
-          type: 'text',
-          text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(selectedPlan.type), selectedPlan.price, 0),
-        };
-      }
-
-      // Ir direto para criar pedido PIX
-      return await createOrderAndGeneratePix(phone, clientName, app, selectedPlan, 0);
+      // Sempre mostrar escolha de forma de pagamento (PIX sempre disponível)
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+        appId: context.appId, 
+        planId: selectedPlan.id,
+        discount: 0,
+      });
+      return {
+        type: 'text',
+        text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(selectedPlan.type), selectedPlan.price, 0),
+      };
     }
     
     return {
@@ -913,21 +906,15 @@ export async function processIncomingMessage(
         return formatMainMenu(clientName);
       }
 
-      const cardEnabled = await getConfig('card_enabled') === 'true';
-      const transferEnabled = await getConfig('transfer_enabled') === 'true';
-      if (cardEnabled || transferEnabled) {
-        await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
-          appId: context.appId, 
-          planId: context.planId,
-          discount: 0,
-        });
-        return {
-          type: 'text',
-          text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(plan.type), plan.price, 0),
-        };
-      }
-      
-      return await createOrderAndGeneratePix(phone, clientName, app, plan, 0);
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+        appId: context.appId, 
+        planId: context.planId,
+        discount: 0,
+      });
+      return {
+        type: 'text',
+        text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(plan.type), plan.price, 0),
+      };
     }
     
     // Validar cupom
@@ -990,23 +977,17 @@ export async function processIncomingMessage(
       data: { usedCount: { increment: 1 } },
     });
 
-    const cardEnabled = await getConfig('card_enabled') === 'true';
-    const transferEnabled = await getConfig('transfer_enabled') === 'true';
-    if (cardEnabled || transferEnabled) {
-      const finalPrice = Math.max(0, plan.price - discount);
-      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
-        appId: context.appId, 
-        planId: context.planId,
-        discount,
-        couponCode: coupon.code,
-      });
-      return {
-        type: 'text',
-        text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(plan.type), finalPrice, discount, plan.price),
-      };
-    }
-
-    return await createOrderAndGeneratePix(phone, clientName, app, plan, discount, coupon.code);
+    const finalPrice = Math.max(0, plan.price - discount);
+    await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+      appId: context.appId, 
+      planId: context.planId,
+      discount,
+      couponCode: coupon.code,
+    });
+    return {
+      type: 'text',
+      text: await formatPaymentMethodOptions(app.name, getPlanNameDisplay(plan.type), finalPrice, discount, plan.price),
+    };
   }
 
   // ==========================================

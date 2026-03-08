@@ -59,7 +59,7 @@ const defaultConfig: BotConfig = {
   human_mode_message: 'Você será atendido por um de nossos atendentes em breve.',
   ai_auto_response: 'false',
   auto_greeting: 'true',
-  show_coupon_option: 'false',
+  show_coupon_option: 'true',
   working_hours_start: '08:00',
   working_hours_end: '22:00',
   out_of_hours_message: 'Estamos fora do horário de atendimento. Deixe sua mensagem!',
