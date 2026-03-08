@@ -244,7 +244,8 @@ export async function formatMainMenu(clientName: string): Promise<InteractiveMes
   }
 
   // Uma única mensagem clara: WhatsApp não tem botões clicáveis, usuário precisa DIGITAR o número
-  const menuText = `*${saudacao}, ${nome}!* 👋\n\n*${welcomeMsg}*\n\n🔒 *PAGAMENTO PIX COPIA COLA* 🔒\n\n*Digite o número da opção:*\n\n1️⃣ ${opt1}\n2️⃣ ${opt2}\n3️⃣ ${opt3}\n4️⃣ ${opt4}\n5️⃣ ${opt5}\n\n0️⃣ Voltar ao menu\n\n${footer}`;
+  const buildMarker = process.env.BOT_BUILD_MARKER || 'v2';
+  const menuText = `*${saudacao}, ${nome}!* 👋\n\n*${welcomeMsg}*\n\n🔒 *PAGAMENTO PIX COPIA COLA* 🔒\n\n*Digite o número da opção:*\n\n1️⃣ ${opt1}\n2️⃣ ${opt2}\n3️⃣ ${opt3}\n4️⃣ ${opt4}\n5️⃣ ${opt5}\n\n0️⃣ Voltar ao menu\n\n${footer}\n_${buildMarker}_`;
 
   messages.push({ type: 'text', text: menuText });
 
