@@ -243,15 +243,6 @@ async function handleTelegramMessage(botToken: string, message: any) {
     // Não entendeu
     await sendTelegramMessage(botToken, chatId, '🤔 Não entendi. Use os botões abaixo:', [[{ text: '📱 Ver Apps', callback_data: 'menu' }], [{ text: '💰 Preços', callback_data: 'precos' }, { text: '❓ Ajuda', callback_data: 'ajuda' }]]);
 
-    await prisma.conversation.create({
-      data: {
-        phoneNumber: `tg_${chatId}`,
-        clientName: 'Bot',
-        message: reply,
-        direction: 'outgoing',
-        state: 'MENU',
-      },
-    });
   } catch (error) {
     console.error('[Telegram] Erro ao processar mensagem:', error);
   }
