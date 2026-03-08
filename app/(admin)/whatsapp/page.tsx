@@ -9,8 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Smartphone, Wifi, WifiOff, RefreshCw, Send, QrCode, Power, Loader2, 
-  RotateCcw, Trash2, Bot, Sparkles, Copy, Check, Clock 
+  RotateCcw, Trash2, Bot, Sparkles, Copy, Check, Clock, Server, ToggleLeft, ToggleRight
 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 
 interface ConnectionStatus {
@@ -33,7 +34,9 @@ export default function WhatsAppPage() {
   const [testPhone, setTestPhone] = useState('');
   const [testMessage, setTestMessage] = useState('');
   const [sendingTest, setSendingTest] = useState(false);
-  
+  const [evolutionEnabled, setEvolutionEnabled] = useState(false);
+  const [evolutionLoading, setEvolutionLoading] = useState(false);
+
   // IA Assistant
   const [customerMessage, setCustomerMessage] = useState('');
   const [aiResponse, setAiResponse] = useState('');
@@ -42,13 +45,39 @@ export default function WhatsAppPage() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/whatsapp/status');
-      const data = await res.json();
+      const [statusRes, configRes] = await Promise.all([
+        fetch('/api/whatsapp/status'),
+        fetch('/api/config'),
+      ]);
+      const data = await statusRes.json();
       setConnectionStatus(data);
+      const config = await configRes.json();
+      setEvolutionEnabled(config?.evolution_api_enabled === 'true');
     } catch (error) {
       console.error('Erro ao buscar status:', error);
     }
   }, []);
+
+  const handleEvolutionToggle = async (checked: boolean) => {
+    setEvolutionLoading(true);
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ evolution_api_enabled: checked ? 'true' : 'false' }),
+      });
+      if (res.ok) {
+        setEvolutionEnabled(checked);
+        toast.success(checked ? 'Evolution API ativada' : 'Evolution API desativada');
+      } else {
+        toast.error('Erro ao salvar');
+      }
+    } catch (error) {
+      toast.error('Erro ao salvar');
+    } finally {
+      setEvolutionLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchStatus();
@@ -246,6 +275,39 @@ export default function WhatsAppPage() {
         </TabsList>
 
         <TabsContent value="connection" className="space-y-4">
+          {/* Evolution API - Ativar/Desativar */}
+          <Card className={evolutionEnabled ? 'border-amber-500/50 bg-amber-50/30' : 'border-gray-200'}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Server className="w-5 h-5" />
+                Evolution API
+              </CardTitle>
+              <CardDescription>
+                Se você usa Evolution API (ex: http://187.77.34.61:8080), ative aqui. Se usa apenas a conexão Baileys abaixo, deixe desativado.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <p className="font-medium">Processar mensagens via Evolution API</p>
+                  <p className="text-sm text-muted-foreground">
+                    {evolutionEnabled ? 'Webhook ativo – mensagens do Evolution serão processadas' : 'Desativado – use a conexão Baileys (QR Code) abaixo'}
+                  </p>
+                </div>
+                <Switch
+                  checked={evolutionEnabled}
+                  onCheckedChange={handleEvolutionToggle}
+                  disabled={evolutionLoading}
+                />
+              </div>
+              {evolutionEnabled && (
+                <p className="mt-2 text-sm text-amber-700">
+                  ⚠️ Com Evolution ativo, configure o webhook em Evolution API apontando para: <code className="bg-amber-100 px-1 rounded">/api/webhook/evolution</code>
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
           <div className="grid gap-6 md:grid-cols-2">
             {/* Card de Conexão */}
             <Card>

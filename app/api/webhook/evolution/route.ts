@@ -2,8 +2,10 @@
  * Webhook para Evolution API
  * Recebe mensagens e envia resposta via Evolution API
  * Configure em: Evolution API > Webhook > URL deste endpoint
+ * Ative/desative em: WhatsApp > Evolution API
  */
 import { NextRequest, NextResponse } from 'next/server';
+import prisma from '@/lib/db';
 import { processIncomingMessage } from '@/lib/bot-logic-web';
 import { formatSimpleMessage } from '@/lib/bot-logic-web';
 
@@ -42,6 +44,11 @@ async function sendViaEvolution(phone: string, text: string): Promise<boolean> {
 
 export async function POST(req: NextRequest) {
   try {
+    const config = await prisma.config.findUnique({ where: { key: 'evolution_api_enabled' } });
+    if (config?.value !== 'true') {
+      return NextResponse.json({ received: true, skipped: 'evolution_disabled' });
+    }
+
     const body = await req.json();
     const event = body?.event || body?.data?.event;
     const data = body?.data || body;
