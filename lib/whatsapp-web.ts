@@ -384,7 +384,9 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
     for (const a of apps) {
       const codes = await prisma.code.count({ where: { appId: a.id, status: "available" } });
       const planLabels: Record<string, string> = { monthly: "Mensal", quarterly: "Trimestral", annual: "Anual" };
-      const plans = a.plans.map(p => `  💵 ${planLabels[p.type] || p.type}: *R$ ${p.price.toFixed(2)}*`).join("\n");
+      const planOrder: Record<string, number> = { monthly: 1, quarterly: 2, annual: 3 };
+      const sorted = [...a.plans].sort((x: any, y: any) => (planOrder[x.type.toLowerCase()] || 9) - (planOrder[y.type.toLowerCase()] || 9));
+      const plans = sorted.map(p => `  💵 ${planLabels[p.type.toLowerCase()] || p.type}: *R$ ${p.price.toFixed(2)}*`).join("\n");
       list += `\n📱 *${a.name}* ${codes > 0 ? `_(${codes} disponíveis)_` : "_(esgotado)_"}\n${plans}\n`;
     }
     return `💰 *TABELA DE PREÇOS*\n━━━━━━━━━━━━━━━━━━${list}\n━━━━━━━━━━━━━━━━━━\n📌 Digite o *nome do app* para comprar\n🔙 *menu* para voltar`;
@@ -410,7 +412,7 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
     const list = orders.map((o, i) => {
       const planLabels: Record<string, string> = { monthly: "Mensal", quarterly: "Trimestral", annual: "Anual" };
       const date = new Date(o.createdAt).toLocaleDateString("pt-BR");
-      return `${i + 1}. *${o.app.name}* - ${planLabels[o.plan.type] || o.plan.type}\n   💵 R$ ${o.amount.toFixed(2)} | ${statusIcons[o.status] || o.status}\n   📅 ${date}`;
+      return `${i + 1}. *${o.app.name}* - ${planLabels[o.plan.type.toLowerCase()] || o.plan.type}\n   💵 R$ ${o.amount.toFixed(2)} | ${statusIcons[o.status] || o.status}\n   📅 ${date}`;
     }).join("\n\n");
     return `📦 *SEUS PEDIDOS*\n━━━━━━━━━━━━━━━━━━\n\n${list}\n\n━━━━━━━━━━━━━━━━━━\n🔙 *menu* para voltar`;
   }
@@ -489,7 +491,11 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
     const planType = planMap[lower];
 
     if (planType && context?.appId) {
-      const plan = await prisma.plan.findFirst({ where: { appId: context.appId, type: planType, isActive: true } });
+      const plan = await prisma.plan.findFirst({ 
+        where: { appId: context.appId, isActive: true, type: { equals: planType, mode: "insensitive" } }
+      }) || await prisma.plan.findFirst({ 
+        where: { appId: context.appId, isActive: true, type: { in: [planType, planType.toUpperCase(), planType.toLowerCase()] } }
+      });
       const appData = await prisma.app.findUnique({ where: { id: context.appId } });
       if (plan && appData) {
         return await createOrder(prisma, phone, name, appData, plan);
@@ -522,12 +528,19 @@ async function showAppPlans(prisma: any, phone: string, appId: string): Promise<
 
   const planLabels: Record<string, string> = { monthly: "Mensal (30 dias)", quarterly: "Trimestral (90 dias)", annual: "Anual (365 dias)" };
   const planEmojis: Record<string, string> = { monthly: "📅", quarterly: "📆", annual: "🗓️" };
+  const planOrder: Record<string, number> = { monthly: 1, quarterly: 2, annual: 3 };
   const codes = await prisma.code.count({ where: { appId, status: "available" } });
 
-  const plans = app.plans.map((p: any, i: number) => {
-    const label = planLabels[p.type] || p.type;
-    const emoji = planEmojis[p.type] || "📋";
-    const savings = p.type === "quarterly" ? " _💡 Economize!_" : p.type === "annual" ? " _🔥 Melhor custo!_" : "";
+  // Ordenar: mensal primeiro, depois trimestral, depois anual
+  const sortedPlans = [...app.plans].sort((a: any, b: any) => 
+    (planOrder[a.type.toLowerCase()] || 9) - (planOrder[b.type.toLowerCase()] || 9)
+  );
+
+  const plans = sortedPlans.map((p: any, i: number) => {
+    const typeKey = p.type.toLowerCase();
+    const label = planLabels[typeKey] || p.type;
+    const emoji = planEmojis[typeKey] || "📋";
+    const savings = typeKey === "quarterly" ? " _💡 Economize!_" : typeKey === "annual" ? " _🔥 Melhor custo!_" : "";
     return `  ${i + 1}️⃣  ${emoji} *${label}*\n      💵 *R$ ${p.price.toFixed(2)}*${savings}`;
   }).join("\n\n");
 
@@ -552,8 +565,9 @@ async function createOrder(prisma: any, phone: string, name: string, app: any, p
   const pixName = config.find((c: any) => c.key === "pix_name")?.value || "";
 
   const planLabels: Record<string, string> = { monthly: "Mensal", quarterly: "Trimestral", annual: "Anual" };
+  const planTypeKey = plan.type.toLowerCase();
 
-  const reply = `🎉 *PEDIDO CRIADO!*\n━━━━━━━━━━━━━━━━━━\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[plan.type] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: *#${order.id.substring(0, 8)}*\n\n━━━━━━━━━━━━━━━━━━\n💳 *PAGUE VIA PIX:*\n━━━━━━━━━━━━━━━━━━\n\n🔑 Chave: *${pixKey || "Não configurada"}*\n👤 Nome: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n━━━━━━━━━━━━━━━━━━\n\n📸 *Após pagar, envie o comprovante aqui*\n⏱️ Prazo: *30 minutos*\n\n_Digite *cancelar* para cancelar o pedido_\n🔙 *menu* para voltar`;
+  const reply = `🎉 *PEDIDO CRIADO!*\n━━━━━━━━━━━━━━━━━━\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[planTypeKey] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: *#${order.id.substring(0, 8)}*\n\n━━━━━━━━━━━━━━━━━━\n💳 *PAGUE VIA PIX:*\n━━━━━━━━━━━━━━━━━━\n\n🔑 Chave: *${pixKey || "Não configurada"}*\n👤 Nome: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n━━━━━━━━━━━━━━━━━━\n\n📸 *Após pagar, envie o comprovante aqui*\n⏱️ Prazo: *30 minutos*\n\n_Digite *cancelar* para cancelar o pedido_\n🔙 *menu* para voltar`;
   await saveState(prisma, phone, "AWAITING_PAYMENT", reply, { orderId: order.id });
   return reply;
 }
