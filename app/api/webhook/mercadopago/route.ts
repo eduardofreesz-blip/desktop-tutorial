@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { sendWhatsAppMessage, getConnectionStatus } from '@/lib/whatsapp-web';
+import { sendMessageToClient } from '@/lib/send-message';
 import { getMercadoPagoAccessToken } from '@/lib/mercadopago';
 
 function isPaymentApproved(status: string): boolean {
@@ -67,13 +67,10 @@ export async function POST(request: NextRequest) {
         data: { status: 'cancelled', cancelledAt: new Date() },
       });
 
-      const whatsappStatus = getConnectionStatus();
-      if (whatsappStatus.status === 'connected') {
-        await sendWhatsAppMessage(
-          order.clientPhone,
-          `❌ *Pagamento não aprovado*\n\nInfelizmente seu pagamento para ${order.app.name} não foi aprovado.\n\nDigite *menu* para tentar novamente.`
-        );
-      }
+      await sendMessageToClient(
+        order.clientPhone,
+        `❌ *Pagamento não aprovado*\n\nInfelizmente seu pagamento para ${order.app.name} não foi aprovado.\n\nDigite *menu* para tentar novamente.`
+      );
     }
 
     return NextResponse.json({ received: true, processed: true });
@@ -143,9 +140,7 @@ async function processApprovedPayment(order: any) {
     });
   });
 
-  const whatsappStatus = getConnectionStatus();
-  if (whatsappStatus.status === 'connected') {
-    const message = `🎉 *PAGAMENTO CONFIRMADO AUTOMATICAMENTE!*
+  const message = `🎉 *PAGAMENTO CONFIRMADO AUTOMATICAMENTE!*
 
 ✅ Seu código de ativação:
 
@@ -164,19 +159,18 @@ Obrigado por comprar na Universal Recargas! 🚀
 
 _Digite "menu" para fazer um novo pedido_`;
 
-    await sendWhatsAppMessage(order.clientPhone, message);
+  await sendMessageToClient(order.clientPhone, message);
 
-    await prisma.conversation.create({
-      data: {
-        phoneNumber: order.clientPhone,
-        clientName: order.clientName ?? 'Cliente',
-        message,
-        direction: 'OUTBOUND',
-        state: 'COMPLETED',
-        context: { orderId: order.id, type: 'code_delivery_auto' },
-      },
-    });
-  }
+  await prisma.conversation.create({
+    data: {
+      phoneNumber: order.clientPhone,
+      clientName: order.clientName ?? 'Cliente',
+      message,
+      direction: 'OUTBOUND',
+      state: 'COMPLETED',
+      context: { orderId: order.id, type: 'code_delivery_auto' },
+    },
+  });
 }
 
 export async function GET() {

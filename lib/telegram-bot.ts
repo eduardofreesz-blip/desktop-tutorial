@@ -49,8 +49,15 @@ export async function configureTelegramBot(botToken: string): Promise<{ success:
   }
 }
 
-async function sendTelegramMessage(botToken: string, chatId: number, text: string, buttons?: Array<Array<{text: string, callback_data: string}>>) {
-  const body: any = { chat_id: chatId, text, parse_mode: 'Markdown' };
+function isPixCode(text: string): boolean {
+  return !!text && text.length > 80 && text.includes('br.gov.bcb.pix');
+}
+
+async function sendTelegramMessage(botToken: string, chatId: number, text: string, buttons?: Array<Array<{text: string, callback_data: string}>>, useMarkdown = true) {
+  const body: any = { chat_id: chatId, text };
+  if (useMarkdown && !isPixCode(text)) {
+    body.parse_mode = 'Markdown';
+  }
   if (buttons && buttons.length > 0) {
     body.reply_markup = { inline_keyboard: buttons };
   }
@@ -76,6 +83,19 @@ async function sendTelegramBotResponse(botToken: string, chatId: number, respons
             body: JSON.stringify({ chat_id: chatId, photo: m.imageUrl, caption: m.caption || '', parse_mode: 'Markdown' }),
           });
           if (!res.ok && m.caption) await sendTelegramMessage(botToken, chatId, m.caption);
+        } else if (m.imageUrl.startsWith('data:image')) {
+          const base64 = m.imageUrl.replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(base64, 'base64');
+          const formData = new FormData();
+          formData.append('chat_id', String(chatId));
+          formData.append('caption', m.caption || '');
+          formData.append('parse_mode', 'Markdown');
+          formData.append('photo', new Blob([buffer], { type: 'image/png' }), 'qrcode.png');
+          const res = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+            method: 'POST',
+            body: formData,
+          });
+          if (!res.ok && m.caption) await sendTelegramMessage(botToken, chatId, m.caption);
         } else if (m.caption) {
           await sendTelegramMessage(botToken, chatId, m.caption);
         }
@@ -92,7 +112,8 @@ async function sendTelegramBotResponse(botToken: string, chatId: number, respons
       } else if (m.listSections && m.listSections.length > 0) {
         buttons = m.listSections.flatMap(s => (s.rows || []).map(r => [{ text: (r.title || r.id).substring(0, 64), callback_data: r.id || r.title || '' }]));
       }
-      await sendTelegramMessage(botToken, chatId, text, buttons);
+      const useMarkdown = !isPixCode(text);
+      await sendTelegramMessage(botToken, chatId, text, buttons, useMarkdown);
     }
   }
 }
@@ -187,4 +208,19 @@ export async function removeTelegramBot(): Promise<{ success: boolean; message: 
   await prisma.config.deleteMany({ where: { key: 'telegram_config' } });
   telegramStatus = { connected: false, polling: false };
   return { success: true, message: 'Bot removido' };
+}
+
+/** Envia mensagem para cliente Telegram (clientPhone = tg_chatId) */
+export async function sendTelegramMessageToClient(clientPhone: string, message: string): Promise<boolean> {
+  if (!clientPhone.startsWith('tg_')) return false;
+  const chatId = clientPhone.replace('tg_', '');
+  const config = await loadTelegramConfig();
+  if (!config?.botToken) return false;
+  try {
+    await sendTelegramMessage(config.botToken, parseInt(chatId, 10), message, undefined, true);
+    return true;
+  } catch (e) {
+    console.error('[Telegram] Erro ao enviar para cliente:', e);
+    return false;
+  }
 }

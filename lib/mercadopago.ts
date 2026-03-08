@@ -72,7 +72,7 @@ export async function createMercadoPagoPixPayment(
         description: `Pedido ${orderId}`,
         payment_method_id: 'pix',
         payer: {
-          email: customerEmail || `${customerId.replace(/\D/g, '')}@temp.mercadopago.com`,
+          email: customerEmail || (customerId.startsWith('tg_') ? 'cliente@telegram.mercadopago.com' : `${customerId.replace(/\D/g, '')}@temp.mercadopago.com`),
           first_name: 'Cliente',
         },
         external_reference: orderId,

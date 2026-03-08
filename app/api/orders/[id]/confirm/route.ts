@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import prisma from '@/lib/db';
 import { Prisma } from '@prisma/client';
-import { sendWhatsAppMessage, getConnectionStatus } from '@/lib/whatsapp-web';
+import { sendMessageToClient } from '@/lib/send-message';
+import { getConnectionStatus } from '@/lib/whatsapp-web';
 
 export async function POST(
   req: NextRequest,
@@ -141,16 +142,9 @@ _Digite "menu" para fazer um novo pedido_`;
       });
     });
 
-    // Verificar se WhatsApp está conectado
     const whatsappStatus = getConnectionStatus();
-    let sent = false;
-
-    if (whatsappStatus.status === 'connected') {
-      sent = await sendWhatsAppMessage(order?.clientPhone ?? '', message);
-      if (!sent) {
-        console.error('[Confirm Payment] Falha ao enviar mensagem via WhatsApp');
-      }
-    } else {
+    const sent = await sendMessageToClient(order?.clientPhone ?? '', message);
+    if (!sent && !order?.clientPhone?.startsWith('tg_')) {
       console.warn('[Confirm Payment] WhatsApp não conectado. Mensagem salva mas não enviada.');
     }
 
