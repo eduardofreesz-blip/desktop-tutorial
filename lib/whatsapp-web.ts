@@ -565,7 +565,6 @@ async function showAppPlans(prisma: any, phone: string, appId: string): Promise<
 }
 
 async function createOrder(prisma: any, phone: string, name: string, app: any, plan: any): Promise<string> {
-  // Verificar estoque
   const available = await prisma.code.count({ where: { appId: app.id, planId: plan.id, status: "available" } });
   if (available === 0) {
     return `❌ *Estoque esgotado!*\n\nO plano *${plan.type}* do *${app.name}* está sem estoque no momento.\n\n💡 Tente outro plano ou outro app.\n🔙 *menu* para voltar`;
@@ -575,14 +574,85 @@ async function createOrder(prisma: any, phone: string, name: string, app: any, p
     data: { clientPhone: phone, clientName: name, appId: app.id, planId: plan.id, amount: plan.price, status: "pending_payment" },
   });
 
-  const config = await prisma.config.findMany({ where: { key: { in: ["pix_key", "pix_name"] } } });
-  const pixKey = config.find((c: any) => c.key === "pix_key")?.value || "";
-  const pixName = config.find((c: any) => c.key === "pix_name")?.value || "";
-
   const planLabels: Record<string, string> = { monthly: "Mensal", quarterly: "Trimestral", annual: "Anual" };
   const planTypeKey = plan.type.toLowerCase();
 
-  const reply = `🎉 *PEDIDO CRIADO!*\n━━━━━━━━━━━━━━━━━━\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[planTypeKey] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: *#${order.id.substring(0, 8)}*\n\n━━━━━━━━━━━━━━━━━━\n💳 *PAGUE VIA PIX:*\n━━━━━━━━━━━━━━━━━━\n\n🔑 Chave: *${pixKey || "Não configurada"}*\n👤 Nome: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n━━━━━━━━━━━━━━━━━━\n\n📸 *Após pagar, envie o comprovante aqui*\n⏱️ Prazo: *30 minutos*\n\n_Digite *cancelar* para cancelar o pedido_\n🔙 *menu* para voltar`;
+  // Tentar gerar PIX automático via PagSeguro
+  let pixAutomatico = false;
+  let pixCopiaECola = "";
+  
+  const pagToken = process.env.PAGSEGURO_TOKEN;
+  const pagEnv = process.env.PAGSEGURO_ENVIRONMENT || "sandbox";
+
+  if (pagToken) {
+    try {
+      const baseUrl = pagEnv === "production"
+        ? "https://api.pagseguro.com"
+        : "https://sandbox.api.pagseguro.com";
+
+      const pixRes = await fetch(`${baseUrl}/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${pagToken}`,
+        },
+        body: JSON.stringify({
+          reference_id: order.id,
+          customer: {
+            name: name || "Cliente",
+            email: "cliente@email.com",
+            tax_id: "00000000000",
+            phones: [{ country: "55", area: phone.substring(0, 2), number: phone.substring(2), type: "MOBILE" }],
+          },
+          items: [{
+            reference_id: plan.id,
+            name: `${app.name} - ${planLabels[planTypeKey] || plan.type}`,
+            quantity: 1,
+            unit_amount: Math.round(plan.price * 100),
+          }],
+          qr_codes: [{
+            amount: { value: Math.round(plan.price * 100) },
+            expiration_date: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+          }],
+          notification_urls: [`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/webhook/pagseguro`],
+        }),
+      });
+
+      if (pixRes.ok) {
+        const pixData = await pixRes.json();
+        const qrCode = pixData.qr_codes?.[0];
+        pixCopiaECola = qrCode?.text || "";
+        const paymentId = pixData.id;
+
+        if (pixCopiaECola) {
+          pixAutomatico = true;
+          await prisma.order.update({
+            where: { id: order.id },
+            data: { paymentId },
+          });
+          console.log(`[PIX] QR Code gerado para pedido ${order.id}`);
+        }
+      } else {
+        const errText = await pixRes.text();
+        console.error(`[PIX] Erro PagSeguro: ${pixRes.status} ${errText.substring(0, 200)}`);
+      }
+    } catch (err: any) {
+      console.error(`[PIX] Erro ao gerar PIX: ${err.message}`);
+    }
+  }
+
+  let reply = "";
+
+  if (pixAutomatico && pixCopiaECola) {
+    reply = `🎉 *PEDIDO CRIADO!*\n━━━━━━━━━━━━━━━━━━\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[planTypeKey] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: *#${order.id.substring(0, 8)}*\n\n━━━━━━━━━━━━━━━━━━\n💳 *PIX COPIA E COLA:*\n━━━━━━━━━━━━━━━━━━\n\n\`\`\`${pixCopiaECola}\`\`\`\n\n📋 *Copie o código acima* e cole no app do seu banco\n⏱️ Validade: *30 minutos*\n\n✅ Pagamento será confirmado *automaticamente*!\n\n_Digite *cancelar* para cancelar_\n🔙 *menu* para voltar`;
+  } else {
+    const config = await prisma.config.findMany({ where: { key: { in: ["pix_key", "pix_name"] } } });
+    const pixKey = config.find((c: any) => c.key === "pix_key")?.value || "";
+    const pixName = config.find((c: any) => c.key === "pix_name")?.value || "";
+
+    reply = `🎉 *PEDIDO CRIADO!*\n━━━━━━━━━━━━━━━━━━\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[planTypeKey] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: *#${order.id.substring(0, 8)}*\n\n━━━━━━━━━━━━━━━━━━\n💳 *PAGUE VIA PIX:*\n━━━━━━━━━━━━━━━━━━\n\n🔑 Chave: *${pixKey || "Não configurada"}*\n👤 Nome: *${pixName || "Não configurado"}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*\n\n━━━━━━━━━━━━━━━━━━\n\n📸 *Após pagar, envie o comprovante aqui*\n⏱️ Prazo: *30 minutos*\n\n_Digite *cancelar* para cancelar_\n🔙 *menu* para voltar`;
+  }
+
   await saveState(prisma, phone, "AWAITING_PAYMENT", reply, { orderId: order.id });
   return reply;
 }
