@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { 
   Bot, MessageSquare, Settings2, Save, RotateCcw, Sparkles, 
-  List, Image, Clock, CheckCircle2, AlertCircle, HelpCircle
+  List, Image, Clock, CheckCircle2, AlertCircle, HelpCircle, Ticket
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -36,6 +37,7 @@ interface BotConfig {
   // Configurações
   ai_auto_response: string;
   auto_greeting: string;
+  show_coupon_option: string;
   working_hours_start: string;
   working_hours_end: string;
   out_of_hours_message: string;
@@ -57,6 +59,7 @@ const defaultConfig: BotConfig = {
   human_mode_message: 'Você será atendido por um de nossos atendentes em breve.',
   ai_auto_response: 'false',
   auto_greeting: 'true',
+  show_coupon_option: 'false',
   working_hours_start: '08:00',
   working_hours_end: '22:00',
   out_of_hours_message: 'Estamos fora do horário de atendimento. Deixe sua mensagem!',
@@ -357,6 +360,21 @@ export default function BotConfigPage() {
                 <Switch
                   checked={config.auto_greeting === 'true'}
                   onCheckedChange={(checked) => handleChange('auto_greeting', checked ? 'true' : 'false')}
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <Label className="text-base flex items-center gap-2">
+                    <Ticket className="w-4 h-4" /> Opção de Cupom
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Perguntar &quot;Você tem cupom?&quot; após o cliente escolher o plano. Crie cupons em <Link href="/coupons" className="text-primary underline hover:no-underline">Cupons</Link>.
+                  </p>
+                </div>
+                <Switch
+                  checked={config.show_coupon_option === 'true'}
+                  onCheckedChange={(checked) => handleChange('show_coupon_option', checked ? 'true' : 'false')}
                 />
               </div>
 
