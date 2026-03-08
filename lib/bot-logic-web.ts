@@ -937,8 +937,13 @@ export async function processIncomingMessage(
           discount: 0,
         });
         return {
-          type: 'text',
-          text: `📱 *${app.name}* - ${getPlanNameDisplay(selectedPlan.type)}\n💰 *Valor:* R$ ${selectedPlan.price.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*\n\n*1* - PIX (copia e cola)\n*2* - Cartão de crédito (link seguro)\n*0* - Voltar`,
+          type: 'buttons',
+          text: `📱 *${app.name}* - ${getPlanNameDisplay(selectedPlan.type)}\n💰 *Valor:* R$ ${selectedPlan.price.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*`,
+          buttons: [
+            { id: '1', title: '💳 PIX (copia e cola)' },
+            { id: '2', title: '🔗 Cartão de crédito' },
+            { id: '0', title: '🔙 Voltar' },
+          ],
         };
       }
 
@@ -984,8 +989,13 @@ export async function processIncomingMessage(
           discount: 0,
         });
         return {
-          type: 'text',
-          text: `📱 *${app.name}* - ${getPlanNameDisplay(plan.type)}\n💰 *Valor:* R$ ${plan.price.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*\n\n*1* - PIX (copia e cola)\n*2* - Cartão de crédito (link seguro)\n*0* - Voltar`,
+          type: 'buttons',
+          text: `📱 *${app.name}* - ${getPlanNameDisplay(plan.type)}\n💰 *Valor:* R$ ${plan.price.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*`,
+          buttons: [
+            { id: '1', title: '💳 PIX (copia e cola)' },
+            { id: '2', title: '🔗 Cartão de crédito' },
+            { id: '0', title: '🔙 Voltar' },
+          ],
         };
       }
       
@@ -1062,8 +1072,13 @@ export async function processIncomingMessage(
         couponCode: coupon.code,
       });
       return {
-        type: 'text',
-        text: `📱 *${app.name}* - ${getPlanNameDisplay(plan.type)}\n💰 *Valor original:* R$ ${plan.price.toFixed(2)}\n🎁 *Desconto:* R$ ${discount.toFixed(2)}\n✨ *Valor final:* R$ ${finalPrice.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*\n\n*1* - PIX (copia e cola)\n*2* - Cartão de crédito (link seguro)\n*0* - Voltar`,
+        type: 'buttons',
+        text: `📱 *${app.name}* - ${getPlanNameDisplay(plan.type)}\n💰 *Valor original:* R$ ${plan.price.toFixed(2)}\n🎁 *Desconto:* R$ ${discount.toFixed(2)}\n✨ *Valor final:* R$ ${finalPrice.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*`,
+        buttons: [
+          { id: '1', title: '💳 PIX (copia e cola)' },
+          { id: '2', title: '🔗 Cartão de crédito' },
+          { id: '0', title: '🔙 Voltar' },
+        ],
       };
     }
 

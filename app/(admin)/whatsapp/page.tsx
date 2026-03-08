@@ -286,7 +286,7 @@ export default function WhatsAppPage() {
                 Use Evolution API ou Baileys (QR Code abaixo). Não use os dois ao mesmo tempo.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <Switch
@@ -309,6 +309,25 @@ export default function WhatsAppPage() {
                   </a>
                 </Button>
               </div>
+              {evolutionEnabled && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Webhook:</span>
+                  <code className="flex-1 truncate rounded bg-muted px-2 py-1 text-xs">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/api/webhook/evolution` : '/api/webhook/evolution'}
+                  </code>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const url = typeof window !== 'undefined' ? `${window.location.origin}/api/webhook/evolution` : '';
+                      navigator.clipboard.writeText(url);
+                      toast.success('URL copiada! Configure em Evolution > Webhook.');
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
 

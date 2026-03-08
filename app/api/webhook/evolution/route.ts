@@ -22,18 +22,26 @@ function splitPixFromMessage(text: string): { pixCode: string | null; rest: stri
   return { pixCode: candidate, rest };
 }
 
+function getEvolutionHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  const key = process.env.EVOLUTION_API_KEY || process.env.EVOLUTION_API_TOKEN;
+  if (key) h['Authorization'] = `Bearer ${key}`;
+  return h;
+}
+
 async function sendViaEvolution(phone: string, text: string): Promise<boolean> {
   try {
     const { pixCode, rest } = splitPixFromMessage(text);
     const number = phone.replace(/\D/g, '');
     const baseUrl = `${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`;
+    const headers = getEvolutionHeaders();
     const payload = (t: string) => ({ number, text: t });
 
     if (pixCode) {
-      await fetch(baseUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload(pixCode)) });
-      if (rest) await fetch(baseUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload(rest)) });
+      await fetch(baseUrl, { method: 'POST', headers, body: JSON.stringify(payload(pixCode)) });
+      if (rest) await fetch(baseUrl, { method: 'POST', headers, body: JSON.stringify(payload(rest)) });
     } else {
-      await fetch(baseUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload(text || ' ')) });
+      await fetch(baseUrl, { method: 'POST', headers, body: JSON.stringify(payload(text || ' ')) });
     }
     return true;
   } catch (e) {
@@ -50,14 +58,14 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const event = body?.event || body?.data?.event;
+    const event = (body?.event || body?.data?.event || '').toLowerCase();
     const data = body?.data || body;
 
-    if (event !== 'messages.upsert' && body?.event !== 'messages.upsert') {
+    if (event !== 'messages.upsert' && event !== 'messages_upsert') {
       return NextResponse.json({ received: true });
     }
 
-    const messages = data?.messages || body?.messages || [];
+    const messages = data?.messages || body?.messages || data?.message || [];
     const msg = messages[0];
     if (!msg || msg?.key?.fromMe) return NextResponse.json({ received: true });
 
@@ -72,13 +80,32 @@ export async function POST(req: NextRequest) {
     if (!result) return NextResponse.json({ received: true });
 
     const toSend = Array.isArray(result) ? result : [result];
+    const mediaUrl = `${EVOLUTION_URL}/message/sendMedia/${EVOLUTION_INSTANCE}`;
+    const number = phone.replace(/\D/g, '');
+
     for (const item of toSend) {
       const m = item as any;
       if (typeof m === 'string') {
         await sendViaEvolution(phone, m);
       } else if (m?.type === 'image' && m?.imageUrl) {
-        // Evolution API send image - simplificado: envia caption como texto
-        if (m.caption) await sendViaEvolution(phone, m.caption);
+        const base64 = m.imageUrl.startsWith('data:') ? m.imageUrl.replace(/^data:image\/\w+;base64,/, '') : m.imageUrl;
+        try {
+          const res = await fetch(mediaUrl, {
+            method: 'POST',
+            headers: getEvolutionHeaders(),
+            body: JSON.stringify({
+              number,
+              mediatype: 'image',
+              mimetype: 'image/png',
+              media: base64,
+              caption: m.caption || '',
+              fileName: 'qrcode.png',
+            }),
+          });
+          if (!res.ok && m.caption) await sendViaEvolution(phone, m.caption);
+        } catch {
+          if (m.caption) await sendViaEvolution(phone, m.caption);
+        }
       } else {
         const txt = m?.text || m?.caption || formatSimpleMessage(m) || '';
         if (txt) await sendViaEvolution(phone, txt);
