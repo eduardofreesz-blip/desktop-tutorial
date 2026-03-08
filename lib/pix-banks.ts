@@ -4,7 +4,7 @@ import fs from 'fs';
 
 const SECRETS_PATH = '/home/ubuntu/.config/abacusai_auth_secrets.json';
 
-export type PixProvider = 'getnet' | 'itau' | 'sicoob' | 'manual';
+export type PixProvider = 'getnet' | 'itau' | 'sicoob' | 'mercadopago' | 'manual';
 
 export interface PixConfig {
   provider: PixProvider;
@@ -20,6 +20,8 @@ export interface PixConfig {
   sicoob_client_id?: string;
   sicoob_client_secret?: string;
   sicoob_chave_pix?: string;
+  // Mercado Pago
+  mercadopago_access_token?: string;
   // Manual
   manual_pix_key?: string;
   manual_pix_name?: string;
@@ -68,6 +70,11 @@ export function getPixCredentials(provider: PixProvider): Record<string, string>
         clientSecret: sicoobSecrets?.client_secret?.value?.trim() || process.env.SICOOB_CLIENT_SECRET || '',
         chavePix: sicoobSecrets?.chave_pix?.value?.trim() || process.env.SICOOB_CHAVE_PIX || '',
       };
+    case 'mercadopago':
+      const mpSecrets = secrets?.mercadopago?.secrets || {};
+      return {
+        accessToken: mpSecrets?.access_token?.value?.trim() || process.env.MERCADOPAGO_ACCESS_TOKEN || process.env.MERCADOPAGO_ACCESS_TOKEN_TEST || '',
+      };
     default:
       return {};
   }
@@ -83,6 +90,8 @@ export function hasProviderCredentials(provider: PixProvider): boolean {
       return !!(creds.clientId && creds.clientSecret && creds.chavePix);
     case 'sicoob':
       return !!(creds.clientId && creds.clientSecret && creds.chavePix);
+    case 'mercadopago':
+      return !!creds.accessToken;
     default:
       return false;
   }
@@ -288,6 +297,7 @@ export async function createSicoobPix(amount: number, orderId: string): Promise<
 
 // ========== UNIFIED PIX CREATION ==========
 import { createPixPayment, hasGetnetCredentials } from './getnet';
+import { createMercadoPagoPixPayment, hasMercadoPagoCredentials } from './mercadopago';
 
 export async function createUnifiedPix(
   provider: PixProvider,
@@ -303,16 +313,17 @@ export async function createUnifiedPix(
         return { success: false, error: 'Credenciais Getnet não configuradas' };
       }
       try {
-        const result = await createPixPayment({
-          amount: Math.round(amount * 100),
-          orderId: `ORDER_${orderId}`,
-          customerId: customerId.replace(/\D/g, ''),
-        });
+        const result = await createPixPayment(
+          Math.round(amount * 100),
+          `ORDER_${orderId}`,
+          customerId.replace(/\D/g, '')
+        );
+        if (!result) return { success: false, error: 'Erro ao gerar PIX Getnet' };
         return {
           success: true,
-          qrCode: result.qr_code,
-          qrCodeImage: result.additional_data?.qr_code_image,
-          paymentId: result.payment_id,
+          qrCode: result.qrCode,
+          qrCodeImage: result.qrCodeBase64 || undefined,
+          paymentId: result.paymentId,
         };
       } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : 'Erro Getnet' };
@@ -329,6 +340,12 @@ export async function createUnifiedPix(
         return { success: false, error: 'Credenciais Sicoob não configuradas' };
       }
       return createSicoobPix(amount, orderId);
+
+    case 'mercadopago':
+      if (!hasMercadoPagoCredentials()) {
+        return { success: false, error: 'Credenciais Mercado Pago não configuradas' };
+      }
+      return createMercadoPagoPixPayment(amount, orderId, customerId);
 
     default:
       return { success: false, error: 'Provider não suportado' };

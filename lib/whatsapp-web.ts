@@ -173,16 +173,7 @@ export async function initWA(): Promise<WASocket> {
 
         const botResponse = await handleBotMessage(phone, pushName, text);
         if (botResponse) {
-          if (typeof botResponse === "string") {
-            await s.sendMessage(phoneRaw, { text: botResponse });
-          } else {
-            // Tentar enviar com botões/lista, fallback para texto
-            try {
-              await s.sendMessage(phoneRaw, botResponse as any);
-            } catch {
-              await s.sendMessage(phoneRaw, { text: (botResponse as any).text || String(botResponse) });
-            }
-          }
+          await sendBotResponse(s, phoneRaw, botResponse);
           const preview = typeof botResponse === "string" ? botResponse.substring(0, 50) : "mensagem interativa";
           console.log(`[WhatsApp] Resposta para ${phone}: ${preview}`);
         }
@@ -259,8 +250,50 @@ export async function sendWhatsAppMessage(to: string, text: string): Promise<boo
   if (!digits) return false;
 
   const jid = digits.includes("@s.whatsapp.net") ? digits : `${digits}@s.whatsapp.net`;
-  await s.sendMessage(jid, { text: String(text || "") });
+  const { pixCode, rest } = splitPixFromMessage(String(text || ""));
+  if (pixCode) {
+    await s.sendMessage(jid, { text: pixCode });
+    if (rest) await s.sendMessage(jid, { text: rest });
+  } else {
+    await s.sendMessage(jid, { text: String(text || "") });
+  }
   return true;
+}
+
+/**
+ * Envia imagem via WhatsApp (base64 ou URL).
+ * Útil para enviar QR Code PIX como imagem.
+ */
+export async function sendWhatsAppImage(
+  to: string,
+  imageBase64OrUrl: string,
+  caption?: string
+): Promise<boolean> {
+  const s = await initWA();
+  const digits = normalizePhone(to);
+  if (!digits) return false;
+
+  const jid = digits.includes("@s.whatsapp.net") ? digits : `${digits}@s.whatsapp.net`;
+
+  try {
+    let imagePayload: Buffer | { url: string };
+    if (imageBase64OrUrl.startsWith("data:")) {
+      const base64Data = imageBase64OrUrl.replace(/^data:image\/\w+;base64,/, "");
+      imagePayload = Buffer.from(base64Data, "base64");
+    } else if (imageBase64OrUrl.startsWith("http://") || imageBase64OrUrl.startsWith("https://")) {
+      imagePayload = { url: imageBase64OrUrl };
+    } else {
+      imagePayload = Buffer.from(imageBase64OrUrl, "base64");
+    }
+    await s.sendMessage(jid, {
+      image: imagePayload,
+      caption: caption || "",
+    });
+    return true;
+  } catch (err) {
+    console.error("[WhatsApp] Erro ao enviar imagem:", err);
+    return false;
+  }
 }
 
 /**
@@ -334,8 +367,79 @@ export async function getPairingCode(phoneNumber: string): Promise<string | null
   }
 }
 
-// Bot message handler
-async function handleBotMessage(phone: string, name: string, text: string): Promise<string | Record<string, any>> {
+// Detecta e extrai código PIX (formato EMV: 00020...br.gov.bcb.pix...)
+function splitPixFromMessage(text: string): { pixCode: string | null; rest: string } {
+  if (!text || typeof text !== "string") return { pixCode: null, rest: text };
+  // PIX copia e cola: começa com 00020, contém br.gov.bcb.pix, só alfanuméricos e .-
+  const pixMatch = text.match(/(00020[0-9a-zA-Z\-\.]+)/);
+  if (!pixMatch) return { pixCode: null, rest: text };
+  const candidate = pixMatch[1];
+  if (candidate.length < 80 || !candidate.includes("br.gov.bcb.pix")) return { pixCode: null, rest: text };
+  const pixCode = candidate;
+  const rest = text.replace(pixCode, "").replace(/\n{3,}/g, "\n\n").trim();
+  return { pixCode, rest };
+}
+
+async function sendTextWithPixSplit(s: WASocket, jid: string, text: string): Promise<void> {
+  const { pixCode, rest } = splitPixFromMessage(text);
+  if (pixCode) {
+    await s.sendMessage(jid, { text: pixCode });
+    if (rest) await s.sendMessage(jid, { text: rest });
+  } else {
+    await s.sendMessage(jid, { text: text || " " });
+  }
+}
+
+// Envia resposta do bot (texto, imagem, array de mensagens)
+async function sendBotResponse(
+  s: WASocket,
+  jid: string,
+  response: string | Record<string, any> | Array<Record<string, any>>
+): Promise<void> {
+  const messages = Array.isArray(response) ? response : [response];
+  for (const msg of messages) {
+    if (typeof msg === "string") {
+      await sendTextWithPixSplit(s, jid, msg);
+      continue;
+    }
+    const m = msg as Record<string, any>;
+    if (m?.type === "image" && (m.imageUrl || m.image)) {
+      let imagePayload: Buffer | { url: string };
+      const img = m.imageUrl || m.image;
+      if (img.startsWith("data:")) {
+        const base64 = img.replace(/^data:image\/\w+;base64,/, "");
+        imagePayload = Buffer.from(base64, "base64");
+      } else if (img.startsWith("http")) {
+        imagePayload = { url: img };
+      } else {
+        imagePayload = Buffer.from(img, "base64");
+      }
+      await s.sendMessage(jid, { image: imagePayload, caption: m.caption || "" });
+    } else {
+      const { formatSimpleMessage } = await import("./bot-logic-web");
+      const text = m?.text || m?.caption || formatSimpleMessage(m as any) || "";
+      if (!text) continue;
+      await sendTextWithPixSplit(s, jid, text);
+    }
+  }
+}
+
+// Bot message handler - usa bot-logic-web para fluxo completo (PIX auto, QR como imagem, etc)
+async function handleBotMessage(phone: string, name: string, text: string): Promise<string | Record<string, any> | Array<Record<string, any>> | null> {
+  try {
+    const { processIncomingMessage } = await import("./bot-logic-web");
+    const result = await processIncomingMessage(phone, text, name, "whatsapp");
+    if (!result) return null;
+    if (Array.isArray(result)) return result as Array<Record<string, any>>;
+    return result as Record<string, any>;
+  } catch (err) {
+    console.error("[WhatsApp] Erro bot-logic-web, fallback para handler local:", err);
+    return handleBotMessageLegacy(phone, name, text);
+  }
+}
+
+// Handler legado (fallback quando bot-logic-web falha)
+async function handleBotMessageLegacy(phone: string, name: string, text: string): Promise<string | Record<string, any>> {
   const { prisma } = await import("./db");
   const lower = text.toLowerCase().trim();
 

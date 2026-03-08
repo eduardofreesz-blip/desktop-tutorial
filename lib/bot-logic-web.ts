@@ -10,6 +10,7 @@ import {
   analyzeSentiment 
 } from './ai-assistant';
 import { createUnifiedPix, hasProviderCredentials, PixProvider } from './pix-banks';
+import { createMercadoPagoCheckoutLink, hasMercadoPagoCredentials } from './mercadopago';
 import { runAgent, requiresAgentAction, AgentContext } from './ai-agent-executor';
 
 // Estados da conversa
@@ -394,42 +395,79 @@ function formatPlansList(app: any): InteractiveMessage {
 }
 
 // Confirmação de pedido com PIX
-function formatOrderConfirmation(
+async function formatOrderConfirmation(
   appName: string,
   planType: string,
   price: number,
   qrCode: string,
-  discount: number = 0
-): InteractiveMessage {
+  discount: number = 0,
+  qrCodeImage?: string | null
+): InteractiveMessage | InteractiveMessage[] {
   const planName = getPlanNameDisplay(planType);
   const originalPrice = price + discount;
 
-  let text = `✅ *PEDIDO CONFIRMADO!*\n\n`;
-  text += `📱 *App:* ${appName}\n`;
-  text += `⏰ *Plano:* ${planName}\n`;
-  
+  let caption = `✅ *PEDIDO CONFIRMADO!*\n\n`;
+  caption += `📱 *App:* ${appName}\n`;
+  caption += `⏰ *Plano:* ${planName}\n`;
   if (discount > 0) {
-    text += `💰 *Valor Original:* ~R$ ${originalPrice.toFixed(2)}~\n`;
-    text += `🎁 *Desconto:* R$ ${discount.toFixed(2)}\n`;
-    text += `✨ *Valor Final:* R$ ${price.toFixed(2)}\n`;
+    caption += `💰 *Valor Original:* ~R$ ${originalPrice.toFixed(2)}~\n`;
+    caption += `🎁 *Desconto:* R$ ${discount.toFixed(2)}\n`;
+    caption += `✨ *Valor Final:* R$ ${price.toFixed(2)}\n`;
   } else {
-    text += `💰 *Valor:* R$ ${price.toFixed(2)}\n`;
+    caption += `💰 *Valor:* R$ ${price.toFixed(2)}\n`;
+  }
+  caption += `\n━━━━━━━━━━━━━━━━━━\n`;
+  caption += `🔐 *PIX - Escaneie o QR Code ou copie o código da mensagem anterior*\n`;
+  caption += `━━━━━━━━━━━━━━━━━━\n\n`;
+  caption += `✨ *Seu código será enviado AUTOMATICAMENTE após o pagamento!*\n\n`;
+  caption += `⏰ O PIX expira em 30 minutos\n\n`;
+  caption += `Digite:\n*1* - Ver status do pedido\n*0* - Voltar ao menu`;
+
+  // Resolver imagem do QR: usar a fornecida ou gerar a partir do código
+  let finalQrImage: string | null = null;
+  if (qrCodeImage && qrCodeImage.length > 50) {
+    finalQrImage = qrCodeImage.startsWith('data:') ? qrCodeImage : `data:image/png;base64,${qrCodeImage}`;
+  } else if (qrCode && qrCode.length > 20) {
+    try {
+      const QRCode = require('qrcode');
+      finalQrImage = await QRCode.toDataURL(qrCode, { width: 400, margin: 2 });
+    } catch (e) {
+      console.warn('[PIX] Erro ao gerar QR a partir do código:', e);
+    }
   }
 
-  text += `\n━━━━━━━━━━━━━━━━━━\n`;
-  text += `🔐 *PIX COPIA E COLA*\n`;
-  text += `━━━━━━━━━━━━━━━━━━\n\n`;
-  text += `📲 *Copie o código abaixo:*\n\n`;
-  text += `\`\`\`${qrCode}\`\`\`\n\n`;
-  text += `✨ *Seu código será enviado AUTOMATICAMENTE após o pagamento!*\n\n`;
-  text += `⏰ O PIX expira em 30 minutos\n\n`;
-  text += `Digite:\n`;
-  text += `*1* - Ver status do pedido\n`;
-  text += `*0* - Voltar ao menu`;
+  const messages: InteractiveMessage[] = [];
 
+  // 1) Código PIX PRIMEIRO, sozinho (uma mensagem = toque e copia fácil)
+  if (qrCode) {
+    messages.push({
+      type: 'text',
+      text: qrCode,
+    });
+  }
+
+  // 2) Imagem do QR + detalhes do pedido (ou só detalhes se não tiver imagem)
+  if (finalQrImage) {
+    messages.push({
+      type: 'image',
+      imageUrl: finalQrImage,
+      caption,
+    });
+  } else if (qrCode) {
+    messages.push({
+      type: 'text',
+      text: caption,
+    });
+  }
+
+  if (messages.length > 0) {
+    return messages;
+  }
+
+  // Fallback: tudo em texto (não deveria chegar aqui se tiver qrCode)
   return {
     type: 'text',
-    text,
+    text: `${caption}\n\n📋 *CÓDIGO PIX:*\n\n${qrCode || '(código não disponível)'}`,
   };
 }
 
@@ -557,12 +595,22 @@ async function formatCodeDelivery(code: string, appName: string, planType: strin
 // ==========================================
 // PROCESSAR MENSAGEM RECEBIDA
 // ==========================================
+// Normaliza telefone para lookup consistente (evita 11999999999 vs 5511999999999)
+function normalizePhoneForLookup(phone: string): string {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return phone;
+  if (digits.startsWith('55') && digits.length >= 12) return digits;
+  if (digits.length >= 10 && digits.length <= 11) return '55' + digits;
+  return digits;
+}
+
 export async function processIncomingMessage(
   phoneNumber: string,
   messageText: string,
   clientNameOrPlatform?: string,
   platform: 'whatsapp' | 'telegram' = 'whatsapp'
 ): Promise<InteractiveMessage | InteractiveMessage[] | null> {
+  const phone = normalizePhoneForLookup(phoneNumber);
   let clientName = 'Cliente';
   if (clientNameOrPlatform === 'telegram' || clientNameOrPlatform === 'whatsapp') {
     platform = clientNameOrPlatform;
@@ -570,13 +618,11 @@ export async function processIncomingMessage(
     clientName = clientNameOrPlatform;
   }
   
-  // OpenClaw removido do projeto
-  
   const text = messageText.trim().toLowerCase();
 
-  // Buscar última conversa
+  // Buscar última conversa (usando phone normalizado)
   const lastConversation = await prisma.conversation.findFirst({
-    where: { phoneNumber },
+    where: { phoneNumber: phone },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -585,15 +631,15 @@ export async function processIncomingMessage(
 
   // Verificar se está em modo humano
   const isHumanMode = lastConversation?.humanMode === true;
-  
+
   // Salvar mensagem recebida
-  await saveMessage(phoneNumber, clientName, messageText, 'INBOUND', currentState, context);
+  await saveMessage(phone, clientName, messageText, 'INBOUND', currentState, context);
 
   // Se está em modo humano
   if (isHumanMode) {
     if (text === 'bot' || text === 'voltar bot' || text === 'ativar bot') {
       await prisma.conversation.updateMany({
-        where: { phoneNumber },
+        where: { phoneNumber: phone },
         data: { humanMode: false },
       });
       return formatMainMenu(clientName);
@@ -604,10 +650,10 @@ export async function processIncomingMessage(
   // ==========================================
   // COMANDOS DO MENU PRINCIPAL
   // ==========================================
-  
+
   // Voltar ao menu (0, menu, inicio, oi, olá)
   if (text === '0' || text === 'menu' || text === 'inicio' || text === 'oi' || text === 'olá' || text === 'ola' || text === 'hi' || text === 'hello') {
-    await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.MENU, {});
+    await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.MENU, {});
     return formatMainMenu(clientName);
   }
 
@@ -617,28 +663,28 @@ export async function processIncomingMessage(
   if (currentState === ConversationState.MENU || !currentState) {
     // 1 - Comprar Recargas
     if (text === '1' || text === 'comprar' || text === 'recargas') {
-      await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.SELECTING_APP, {});
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_APP, {});
       return formatAppsList();
     }
-    
+
     // 2 - Suporte Humanizado
     if (text === '2' || text === 'suporte' || text === 'atendente' || text === 'humano') {
       await prisma.conversation.updateMany({
-        where: { phoneNumber },
+        where: { phoneNumber: phone },
         data: { humanMode: true },
       });
-      await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.HUMAN_SUPPORT, {});
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.HUMAN_SUPPORT, {});
       return formatHumanSupport();
     }
-    
+
     // 3 - Instalação
     if (text === '3' || text === 'instalação' || text === 'instalar' || text === 'tutorial') {
       return formatInstallation();
     }
-    
+
     // 4 - Meus Pedidos
     if (text === '4' || text === 'pedidos' || text === 'meus pedidos') {
-      return formatMyOrders(phoneNumber);
+      return formatMyOrders(phone);
     }
     
     // 5 - Sobre Nós
@@ -661,14 +707,14 @@ export async function processIncomingMessage(
     }
     
     // Buscar perfil e histórico do cliente para contexto rico
-    const customerProfile = await getCustomerProfile(phoneNumber);
-    const conversationHistory = await getConversationHistory(phoneNumber, 8);
-    
+    const customerProfile = await getCustomerProfile(phone);
+    const conversationHistory = await getConversationHistory(phone, 8);
+
     // Buscar último pedido
     let lastOrder = undefined;
     if (customerProfile && customerProfile.totalOrders > 0) {
       const recentOrder = await prisma.order.findFirst({
-        where: { clientPhone: phoneNumber },
+        where: { clientPhone: phone },
         include: { app: true, plan: true },
         orderBy: { createdAt: 'desc' },
       });
@@ -691,10 +737,9 @@ export async function processIncomingMessage(
           a.name.toLowerCase().includes(entities.app.toLowerCase())
         );
         if (targetApp) {
-          // Salvar estado no banco
           await prisma.conversation.create({
             data: {
-              phoneNumber,
+              phoneNumber: phone,
               clientName,
               message: messageText,
               direction: 'incoming',
@@ -710,7 +755,7 @@ export async function processIncomingMessage(
     
     // Se pedido de status, mostrar pedidos
     if (intent === 'order_status' && confidence > 0.8 && customerProfile && customerProfile.totalOrders > 0) {
-      return await formatMyOrders(phoneNumber);
+      return await formatMyOrders(phone);
     }
     
     // Se problema/suporte, oferecer ajuda humana
@@ -727,18 +772,18 @@ export async function processIncomingMessage(
     
     // Verificar se é um telefone admin (pode executar ações)
     const adminPhones = (process.env.ADMIN_PHONES || '').split(',').map(p => p.trim()).filter(p => p);
-    const isAdmin = adminPhones.includes(phoneNumber) || adminPhones.some(p => phoneNumber.includes(p));
+    const isAdmin = adminPhones.includes(phone) || adminPhones.some(p => phone.includes(p));
     
     // Verificar se a mensagem requer ações do agente (criar, editar, deletar, etc.)
     const needsAgentAction = requiresAgentAction(messageText);
     
     // Se é admin e requer ação, usar agente completo
     if (isAdmin && needsAgentAction) {
-      console.log(`[BOT-AGENT] Admin detectado: ${phoneNumber} - Executando agente inteligente`);
-      
+      console.log(`[BOT-AGENT] Admin detectado: ${phone} - Executando agente inteligente`);
+
       try {
         const agentContext: AgentContext = {
-          phoneNumber,
+          phoneNumber: phone,
           customerName: clientName,
           isAdmin: true
         };
@@ -779,9 +824,9 @@ export async function processIncomingMessage(
           console.log(`[BOT-AGENT] Usuário comum solicitando informações via agente`);
           
           const agentContext: AgentContext = {
-            phoneNumber,
+            phoneNumber: phone,
             customerName: clientName,
-            isAdmin: false  // Limitado a consultas
+            isAdmin: false
           };
           
           const agentResult = await runAgent(messageText, agentContext);
@@ -792,7 +837,7 @@ export async function processIncomingMessage(
         
         const aiContext: AIContext = {
           customerName: clientName,
-          customerPhone: phoneNumber,
+          customerPhone: phone,
           lastOrder,
           conversationHistory: conversationHistory.map(c => ({
             role: c.role,
@@ -823,7 +868,7 @@ export async function processIncomingMessage(
     
     if (appIndex >= 0 && appIndex < apps.length) {
       const selectedApp = apps[appIndex];
-      await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PLAN, { appId: selectedApp.id });
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PLAN, { appId: selectedApp.id });
       
       // Enviar imagem do app se existir
       const messages: InteractiveMessage[] = [];
@@ -878,7 +923,7 @@ export async function processIncomingMessage(
       // Verificar se cupom está habilitado
       const showCoupon = await getConfig('show_coupon_option');
       if (showCoupon === 'true') {
-        await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.ENTERING_COUPON, { 
+        await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.ENTERING_COUPON, { 
           appId: context.appId, 
           planId: selectedPlan.id 
         });
@@ -889,8 +934,22 @@ export async function processIncomingMessage(
         };
       }
 
-      // Ir direto para criar pedido
-      return await createOrderAndGeneratePix(phoneNumber, clientName, app, selectedPlan, 0);
+      // Verificar se cartão está habilitado - mostrar escolha de forma de pagamento
+      const cardEnabled = await getConfig('card_enabled');
+      if (cardEnabled === 'true') {
+        await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+          appId: context.appId, 
+          planId: selectedPlan.id,
+          discount: 0,
+        });
+        return {
+          type: 'text',
+          text: `📱 *${app.name}* - ${getPlanNameDisplay(selectedPlan.type)}\n💰 *Valor:* R$ ${selectedPlan.price.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*\n\n*1* - PIX (copia e cola)\n*2* - Cartão de crédito (link seguro)\n*0* - Voltar`,
+        };
+      }
+
+      // Ir direto para criar pedido PIX
+      return await createOrderAndGeneratePix(phone, clientName, app, selectedPlan, 0);
     }
     
     return {
@@ -922,8 +981,21 @@ export async function processIncomingMessage(
       if (!app || !plan) {
         return formatMainMenu(clientName);
       }
+
+      const cardEnabled = await getConfig('card_enabled');
+      if (cardEnabled === 'true') {
+        await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+          appId: context.appId, 
+          planId: context.planId,
+          discount: 0,
+        });
+        return {
+          type: 'text',
+          text: `📱 *${app.name}* - ${getPlanNameDisplay(plan.type)}\n💰 *Valor:* R$ ${plan.price.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*\n\n*1* - PIX (copia e cola)\n*2* - Cartão de crédito (link seguro)\n*0* - Voltar`,
+        };
+      }
       
-      return await createOrderAndGeneratePix(phoneNumber, clientName, app, plan, 0);
+      return await createOrderAndGeneratePix(phone, clientName, app, plan, 0);
     }
     
     // Validar cupom
@@ -986,7 +1058,60 @@ export async function processIncomingMessage(
       data: { usedCount: { increment: 1 } },
     });
 
-    return await createOrderAndGeneratePix(phoneNumber, clientName, app, plan, discount, coupon.code);
+    const cardEnabled = await getConfig('card_enabled');
+    if (cardEnabled === 'true') {
+      const finalPrice = Math.max(0, plan.price - discount);
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+        appId: context.appId, 
+        planId: context.planId,
+        discount,
+        couponCode: coupon.code,
+      });
+      return {
+        type: 'text',
+        text: `📱 *${app.name}* - ${getPlanNameDisplay(plan.type)}\n💰 *Valor original:* R$ ${plan.price.toFixed(2)}\n🎁 *Desconto:* R$ ${discount.toFixed(2)}\n✨ *Valor final:* R$ ${finalPrice.toFixed(2)}\n\n💳 *ESCOLHA A FORMA DE PAGAMENTO:*\n\n*1* - PIX (copia e cola)\n*2* - Cartão de crédito (link seguro)\n*0* - Voltar`,
+      };
+    }
+
+    return await createOrderAndGeneratePix(phone, clientName, app, plan, discount, coupon.code);
+  }
+
+  // ==========================================
+  // ESTADO: SELECIONANDO FORMA DE PAGAMENTO
+  // ==========================================
+  if (currentState === ConversationState.SELECTING_PAYMENT_METHOD) {
+    if (text === '0') {
+      return formatMainMenu(clientName);
+    }
+
+    if (text === '1') {
+      // PIX
+      const app = await prisma.app.findUnique({
+        where: { id: context.appId },
+        include: { plans: true },
+      });
+      const plan = await prisma.plan.findUnique({ where: { id: context.planId } });
+      if (!app || !plan) return formatMainMenu(clientName);
+      const discount = context.discount ?? 0;
+      return await createOrderAndGeneratePix(phone, clientName, app, plan, discount, context.couponCode);
+    }
+
+    if (text === '2') {
+      // Cartão - criar pedido e enviar link Mercado Pago
+      const app = await prisma.app.findUnique({
+        where: { id: context.appId },
+        include: { plans: true },
+      });
+      const plan = await prisma.plan.findUnique({ where: { id: context.planId } });
+      if (!app || !plan) return formatMainMenu(clientName);
+      const discount = context.discount ?? 0;
+      return await createOrderAndSendCardLink(phone, clientName, app, plan, discount, context.couponCode);
+    }
+
+    return {
+      type: 'text',
+      text: '❌ Opção inválida. Digite *1* para PIX, *2* para Cartão ou *0* para voltar.',
+    };
   }
 
   // ==========================================
@@ -1024,6 +1149,62 @@ export async function processIncomingMessage(
 }
 
 // ==========================================
+// CRIAR PEDIDO E ENVIAR LINK CARTÃO
+// ==========================================
+async function createOrderAndSendCardLink(
+  phoneNumber: string,
+  clientName: string,
+  app: any,
+  plan: any,
+  discount: number,
+  couponCode?: string
+): Promise<InteractiveMessage> {
+  const activeProvider = (await getConfig('active_pix_provider') || await getConfig('active_provider')) || 'getnet';
+  if (activeProvider !== 'mercadopago' || !hasMercadoPagoCredentials()) {
+    return {
+      type: 'text',
+      text: `❌ *Cartão indisponível*\n\nO pagamento com cartão está disponível apenas com Mercado Pago. Configure o Mercado Pago como gateway ativo em Configurações > Pagamentos.\n\nDigite *1* para pagar com PIX ou *0* para voltar.`,
+    };
+  }
+
+  const order = await createOrder(phoneNumber, clientName, app.id, plan.id, discount);
+  if (!order) {
+    return {
+      type: 'text',
+      text: '❌ Erro ao criar pedido. Tente novamente.\n\nDigite *0* para voltar ao menu.',
+    };
+  }
+
+  const title = `Recarga ${app.name} - ${getPlanNameDisplay(plan.type)}`;
+  const result = await createMercadoPagoCheckoutLink(order.id, title, order.amount, undefined);
+
+  if (!result.success || !result.checkoutUrl) {
+    return {
+      type: 'text',
+      text: `❌ Não foi possível gerar o link de pagamento. ${result.error || ''}\n\n*1* - Tentar com PIX\n*0* - Voltar ao menu`,
+    };
+  }
+
+  await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.AWAITING_PAYMENT, { 
+    orderId: order.id,
+    couponCode,
+    discount,
+  });
+
+  const msg = `💳 *PAGAMENTO COM CARTÃO*\n\n` +
+    `📱 *App:* ${app.name}\n` +
+    `⏰ *Plano:* ${getPlanNameDisplay(plan.type)}\n` +
+    `💰 *Valor:* R$ ${order.amount.toFixed(2)}\n\n` +
+    `🔗 *Clique no link abaixo para pagar com cartão:*\n\n` +
+    `${result.checkoutUrl}\n\n` +
+    `✨ *Seu código será enviado automaticamente após o pagamento!*\n\n` +
+    `Digite *1* - Ver status do pedido\n` +
+    `Digite *0* - Voltar ao menu`;
+
+  return { type: 'text', text: msg };
+}
+
+// ==========================================
 // CRIAR PEDIDO E GERAR PIX
 // ==========================================
 async function createOrderAndGeneratePix(
@@ -1048,7 +1229,7 @@ async function createOrderAndGeneratePix(
 
   // Verificar se PIX automático está habilitado
   const pixAutoEnabled = await getConfig('pix_auto_enabled');
-  const activeProvider = await getConfig('active_pix_provider') as PixProvider || 'getnet';
+  const activeProvider = (await getConfig('active_pix_provider') || await getConfig('active_provider')) as PixProvider || 'getnet';
   
   // Tentar PIX automático
   if (pixAutoEnabled === 'true') {
@@ -1064,13 +1245,24 @@ async function createOrderAndGeneratePix(
         );
 
         if (pixResult.success && pixResult.qrCode) {
+          await prisma.order.update({
+            where: { id: order.id },
+            data: { paymentId: pixResult.paymentId || undefined },
+          });
           await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.AWAITING_PAYMENT, { 
             orderId: order.id,
             couponCode,
             discount,
           });
           
-          return formatOrderConfirmation(app.name, plan.type, finalPrice, pixResult.qrCode, discount);
+          return await formatOrderConfirmation(
+            app.name,
+            plan.type,
+            finalPrice,
+            pixResult.qrCode,
+            discount,
+            pixResult.qrCodeImage
+          );
         }
       } catch (error) {
         console.error('Erro PIX automático:', error);

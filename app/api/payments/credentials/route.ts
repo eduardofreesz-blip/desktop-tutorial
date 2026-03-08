@@ -34,6 +34,10 @@ export async function POST(request: NextRequest) {
       if (!clientId || !clientSecret || !chavePix) {
         return NextResponse.json({ error: 'Preencha Client ID, Client Secret e Chave PIX' }, { status: 400 });
       }
+    } else if (provider === 'mercadopago') {
+      if (!clientId) {
+        return NextResponse.json({ error: 'Preencha o Access Token' }, { status: 400 });
+      }
     } else {
       return NextResponse.json({ error: 'Provider não suportado' }, { status: 400 });
     }
@@ -79,6 +83,12 @@ export async function POST(request: NextRequest) {
           chave_pix: { value: chavePix.trim() },
         },
       };
+    } else if (provider === 'mercadopago') {
+      secrets.mercadopago = {
+        secrets: {
+          access_token: { value: clientId.trim() },
+        },
+      };
     }
 
     // Write back
@@ -110,6 +120,8 @@ export async function POST(request: NextRequest) {
       envVars.SICOOB_CLIENT_ID = clientId.trim();
       envVars.SICOOB_CLIENT_SECRET = clientSecret.trim();
       envVars.SICOOB_CHAVE_PIX = chavePix.trim();
+    } else if (provider === 'mercadopago') {
+      envVars.MERCADOPAGO_ACCESS_TOKEN = clientId.trim();
     }
 
     for (const [key, value] of Object.entries(envVars)) {
@@ -154,12 +166,15 @@ export async function GET() {
     const hasPagseguro = !!(pagseguroSecrets?.token?.value && 
                            pagseguroSecrets?.email?.value);
 
+    const mercadopagoSecrets = secrets?.mercadopago?.secrets || {};
+    const hasMercadoPago = !!mercadopagoSecrets?.access_token?.value;
+
     return NextResponse.json({
-      configured: hasGetnet || hasPagseguro,
+      configured: hasGetnet || hasPagseguro || hasMercadoPago,
       providers: {
         getnet: hasGetnet,
         pagseguro: hasPagseguro,
-        mercadopago: false,
+        mercadopago: hasMercadoPago,
         asaas: false,
         stripe: false,
       },

@@ -32,7 +32,7 @@ interface Order {
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [filter, setFilter] = useState('PENDING_PAYMENT');
+  const [filter, setFilter] = useState('pending_payment');
   const [confirming, setConfirming] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -93,10 +93,10 @@ export default function OrdersPage() {
 
   const getStatusBadge = (status: string) => {
     const statusConfig: Record<string, { label: string; variant: any }> = {
-      PENDING_PAYMENT: { label: 'Aguardando', variant: 'outline' },
-      PAID: { label: 'Pago', variant: 'default' },
-      CODE_SENT: { label: 'Enviado', variant: 'default' },
-      CANCELLED: { label: 'Cancelado', variant: 'destructive' },
+      pending_payment: { label: 'Aguardando', variant: 'outline' },
+      paid: { label: 'Pago', variant: 'default' },
+      code_sent: { label: 'Enviado', variant: 'default' },
+      cancelled: { label: 'Cancelado', variant: 'destructive' },
     };
 
     const config = statusConfig[status] || { label: status, variant: 'outline' };
@@ -137,9 +137,9 @@ export default function OrdersPage() {
 
       <div className="flex gap-2 flex-wrap">
         {[
-          { value: 'PENDING_PAYMENT', label: 'Pendentes', icon: Clock },
-          { value: 'CODE_SENT', label: 'Enviados', icon: Check },
-          { value: 'CANCELLED', label: 'Cancelados', icon: X },
+          { value: 'pending_payment', label: 'Pendentes', icon: Clock },
+          { value: 'code_sent', label: 'Enviados', icon: Check },
+          { value: 'cancelled', label: 'Cancelados', icon: X },
           { value: '', label: 'Todos', icon: ShoppingCart },
         ].map((tab) => (
           <Button
