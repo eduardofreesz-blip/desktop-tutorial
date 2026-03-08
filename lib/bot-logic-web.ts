@@ -243,25 +243,10 @@ async function formatMainMenu(clientName: string): Promise<InteractiveMessage[]>
     messages.push({ type: 'image', imageUrl: welcomeImage, caption: '' });
   }
 
-  messages.push({
-    type: 'buttons',
-    text: `*${saudacao}, ${nome}!* 👋\n\n*${welcomeMsg}*\n\n🔒 *PAGAMENTO PIX COPIA COLA* 🔒\n\n*Clique em uma opção:*`,
-    footer,
-    buttons: [
-      { id: '1', title: opt1.length > 25 ? opt1.substring(0, 25) : opt1 },
-      { id: '2', title: opt2.length > 25 ? opt2.substring(0, 25) : opt2 },
-      { id: '3', title: opt3.length > 25 ? opt3.substring(0, 25) : opt3 },
-    ],
-  });
+  // Uma única mensagem clara: WhatsApp não tem botões clicáveis, usuário precisa DIGITAR o número
+  const menuText = `*${saudacao}, ${nome}!* 👋\n\n*${welcomeMsg}*\n\n🔒 *PAGAMENTO PIX COPIA COLA* 🔒\n\n*Digite o número da opção:*\n\n1️⃣ ${opt1}\n2️⃣ ${opt2}\n3️⃣ ${opt3}\n4️⃣ ${opt4}\n5️⃣ ${opt5}\n\n0️⃣ Voltar ao menu\n\n${footer}`;
 
-  messages.push({
-    type: 'buttons',
-    text: '*Mais opções:*',
-    buttons: [
-      { id: '4', title: opt4.length > 25 ? opt4.substring(0, 25) : opt4 },
-      { id: '5', title: opt5.length > 25 ? opt5.substring(0, 25) : opt5 },
-    ],
-  });
+  messages.push({ type: 'text', text: menuText });
 
   return messages;
 }
