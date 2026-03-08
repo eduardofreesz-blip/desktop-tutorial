@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ message: 'Configurações salvas com sucesso' });
+    return NextResponse.json({ success: true, message: 'Configurações salvas com sucesso' });
   } catch (error) {
     console.error('Erro ao salvar configurações:', error);
     return NextResponse.json(

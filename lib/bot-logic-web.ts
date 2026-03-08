@@ -222,51 +222,44 @@ export interface InteractiveMessage {
 }
 
 // ==========================================
-// MENU PRINCIPAL - ESTILO ZAP GESTOR
+// MENU PRINCIPAL - USA CONFIGS DO SITE
 // ==========================================
 async function formatMainMenu(clientName: string): Promise<InteractiveMessage[]> {
   const saudacao = getSaudacao();
   const nome = clientName || 'Cliente';
-  
-  // Buscar imagem de boas-vindas configurada
   const welcomeImage = await getConfig('welcome_image');
+  const welcomeMsg = await getConfig('welcome_message') || 'Bem-vindo ao Universal Recargas! 🎉';
+  const menuTitle = await getConfig('menu_title') || 'UNIVERSAL RECARGAS';
+  const opt1 = await getConfig('menu_option_1') || '🎁 COMPRAR';
+  const opt2 = await getConfig('menu_option_2') || '🧑 SUPORTE';
+  const opt3 = await getConfig('menu_option_3') || '📲 INSTALAÇÃO';
+  const opt4 = await getConfig('menu_option_4') || '📝 MEUS PEDIDOS';
+  const opt5 = await getConfig('menu_option_5') || 'ℹ️ SOBRE NÓS';
+  const footer = await getConfig('menu_footer') || '🛒 Universal Recargas - Sua Loja de Confiança';
+
   const messages: InteractiveMessage[] = [];
 
-  // Adicionar imagem se configurada
   if (welcomeImage) {
-    messages.push({
-      type: 'image',
-      imageUrl: welcomeImage,
-      caption: '',
-    });
+    messages.push({ type: 'image', imageUrl: welcomeImage, caption: '' });
   }
 
-  // Mensagem principal com menu usando botões
   messages.push({
     type: 'buttons',
-    text: `*${saudacao}, ${nome}!* 👋
-
-*Bem-vindo ao Universal Recargas!* 🎉
-*Estamos Felizes em Ter Você Conosco!*
-
-🔒 *PAGAMENTO PIX COPIA COLA* 🔒
-
-*Clique em uma opção:*`,
-    footer: '🛒 Universal Recargas - Sua Loja de Confiança',
+    text: `*${saudacao}, ${nome}!* 👋\n\n*${welcomeMsg}*\n\n🔒 *PAGAMENTO PIX COPIA COLA* 🔒\n\n*Clique em uma opção:*`,
+    footer,
     buttons: [
-      { id: '1', title: '🎁 COMPRAR' },
-      { id: '2', title: '🧑 SUPORTE' },
-      { id: '3', title: '📲 INSTALAÇÃO' },
+      { id: '1', title: opt1.length > 25 ? opt1.substring(0, 25) : opt1 },
+      { id: '2', title: opt2.length > 25 ? opt2.substring(0, 25) : opt2 },
+      { id: '3', title: opt3.length > 25 ? opt3.substring(0, 25) : opt3 },
     ],
   });
 
-  // Segunda mensagem com mais opções
   messages.push({
     type: 'buttons',
     text: '*Mais opções:*',
     buttons: [
-      { id: '4', title: '📝 MEUS PEDIDOS' },
-      { id: '5', title: 'ℹ️ SOBRE NÓS' },
+      { id: '4', title: opt4.length > 25 ? opt4.substring(0, 25) : opt4 },
+      { id: '5', title: opt5.length > 25 ? opt5.substring(0, 25) : opt5 },
     ],
   });
 
@@ -513,11 +506,10 @@ function formatOrderConfirmationManual(
 }
 
 // Mensagem de suporte humanizado
-function formatHumanSupport(): InteractiveMessage {
-  return {
-    type: 'text',
-    text: `🧑 *SUPORTE HUMANIZADO*\n\nVocê será atendido por um de nossos atendentes em breve.\n\n⏰ Horário de atendimento:\n*Segunda a Sexta:* 9h às 18h\n*Sábado:* 9h às 14h\n\nAguarde que logo responderemos!\n\n_Digite *bot* para voltar ao atendimento automático._`,
-  };
+async function formatHumanSupport(): Promise<InteractiveMessage> {
+  const msg = await getConfig('human_mode_message') ||
+    `🧑 *SUPORTE HUMANIZADO*\n\nVocê será atendido por um de nossos atendentes em breve.\n\n⏰ Horário de atendimento:\n*Segunda a Sexta:* 9h às 18h\n*Sábado:* 9h às 14h\n\nAguarde que logo responderemos!\n\n_Digite *bot* para voltar ao atendimento automático._`;
+  return { type: 'text', text: msg };
 }
 
 // Mensagem de instalação
@@ -597,7 +589,9 @@ async function formatCodeDelivery(code: string, appName: string, planType: strin
 // ==========================================
 // Normaliza telefone para lookup consistente (evita 11999999999 vs 5511999999999)
 function normalizePhoneForLookup(phone: string): string {
-  const digits = String(phone || '').replace(/\D/g, '');
+  if (!phone || typeof phone !== 'string') return phone || '';
+  if (phone.startsWith('tg_')) return phone; // Telegram: preservar tg_chatId
+  const digits = phone.replace(/\D/g, '');
   if (!digits) return phone;
   if (digits.startsWith('55') && digits.length >= 12) return digits;
   if (digits.length >= 10 && digits.length <= 11) return '55' + digits;
@@ -674,7 +668,7 @@ export async function processIncomingMessage(
         data: { humanMode: true },
       });
       await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.HUMAN_SUPPORT, {});
-      return formatHumanSupport();
+      return await formatHumanSupport();
     }
 
     // 3 - Instalação

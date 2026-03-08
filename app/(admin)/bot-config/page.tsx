@@ -23,6 +23,7 @@ interface BotConfig {
   menu_option_3: string;
   menu_option_4: string;
   menu_option_5: string;
+  menu_footer: string;
   
   // Mensagens Personalizadas
   welcome_message: string;
@@ -42,11 +43,12 @@ interface BotConfig {
 
 const defaultConfig: BotConfig = {
   menu_title: '📱 *UNIVERSAL RECARGAS*',
-  menu_option_1: '📲 Ver Apps e Planos',
-  menu_option_2: '📋 Meus Pedidos',
-  menu_option_3: '💡 Como Funciona',
-  menu_option_4: '👤 Falar com Atendente',
-  menu_option_5: '❓ Ajuda',
+  menu_option_1: '🎁 COMPRAR',
+  menu_option_2: '🧑 SUPORTE',
+  menu_option_3: '📲 INSTALAÇÃO',
+  menu_option_4: '📝 MEUS PEDIDOS',
+  menu_option_5: 'ℹ️ SOBRE NÓS',
+  menu_footer: '🛒 Universal Recargas - Sua Loja de Confiança',
   welcome_message: 'Olá! Bem-vindo à Universal Recargas! 🎉',
   welcome_image: '',
   about_us_text: 'Somos especialistas em recargas de apps de streaming!',
@@ -175,7 +177,9 @@ export default function BotConfigPage() {
           <Card>
             <CardHeader>
               <CardTitle>Menu Principal do Bot</CardTitle>
-              <CardDescription>Configure as opções do menu que os clientes veem</CardDescription>
+              <CardDescription>
+                Personalize os textos das opções. A ordem é fixa: 1=Comprar, 2=Suporte, 3=Instalação, 4=Meus Pedidos, 5=Sobre Nós
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -183,7 +187,16 @@ export default function BotConfigPage() {
                 <Input
                   value={config.menu_title}
                   onChange={(e) => handleChange('menu_title', e.target.value)}
-                  placeholder="Título do menu"
+                  placeholder="📱 *UNIVERSAL RECARGAS*"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Rodapé do Menu</Label>
+                <Input
+                  value={config.menu_footer || ''}
+                  onChange={(e) => handleChange('menu_footer', e.target.value)}
+                  placeholder="🛒 Universal Recargas - Sua Loja de Confiança"
                 />
               </div>
 
@@ -402,6 +415,7 @@ export default function BotConfigPage() {
                     <p>*4* - {config.menu_option_4}</p>
                     <p>*5* - {config.menu_option_5}</p>
                   </div>
+                  {config.menu_footer && <p className="text-xs text-gray-500 mt-2">{config.menu_footer}</p>}
                   <p className="text-xs text-gray-600 mt-3">Digite o número da opção desejada</p>
                 </div>
                 <p className="text-xs text-center text-white/70">Preview - Mensagem do WhatsApp</p>

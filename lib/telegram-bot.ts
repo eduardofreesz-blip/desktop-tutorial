@@ -1,4 +1,5 @@
 import { prisma } from './db';
+import { processIncomingMessage, formatSimpleMessage, type InteractiveMessage } from './bot-logic-web';
 
 interface TelegramConfig {
   botToken: string;
@@ -50,14 +51,50 @@ export async function configureTelegramBot(botToken: string): Promise<{ success:
 
 async function sendTelegramMessage(botToken: string, chatId: number, text: string, buttons?: Array<Array<{text: string, callback_data: string}>>) {
   const body: any = { chat_id: chatId, text, parse_mode: 'Markdown' };
-  if (buttons) {
+  if (buttons && buttons.length > 0) {
     body.reply_markup = { inline_keyboard: buttons };
   }
-  await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+  const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  if (!res.ok) console.error('[Telegram] Erro ao enviar:', await res.text());
+}
+
+async function sendTelegramBotResponse(botToken: string, chatId: number, response: InteractiveMessage | InteractiveMessage[] | null): Promise<void> {
+  if (!response) return;
+  const items = Array.isArray(response) ? response : [response];
+  for (const item of items) {
+    const m = item as InteractiveMessage;
+    if (m.type === 'image' && m.imageUrl) {
+      try {
+        if (m.imageUrl.startsWith('http')) {
+          const res = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, photo: m.imageUrl, caption: m.caption || '', parse_mode: 'Markdown' }),
+          });
+          if (!res.ok && m.caption) await sendTelegramMessage(botToken, chatId, m.caption);
+        } else if (m.caption) {
+          await sendTelegramMessage(botToken, chatId, m.caption);
+        }
+      } catch (e) {
+        console.error('[Telegram] Erro ao enviar imagem:', e);
+        if (m.caption) await sendTelegramMessage(botToken, chatId, m.caption);
+      }
+    } else {
+      const text = m.text || m.caption || formatSimpleMessage(m);
+      if (!text) continue;
+      let buttons: Array<Array<{text: string, callback_data: string}>> | undefined;
+      if (m.buttons && m.buttons.length > 0) {
+        buttons = [m.buttons.map(b => ({ text: (b.title || b.id || '').substring(0, 64), callback_data: b.id || b.title || '' }))];
+      } else if (m.listSections && m.listSections.length > 0) {
+        buttons = m.listSections.flatMap(s => (s.rows || []).map(r => [{ text: (r.title || r.id).substring(0, 64), callback_data: r.id || r.title || '' }]));
+      }
+      await sendTelegramMessage(botToken, chatId, text, buttons);
+    }
+  }
 }
 
 async function pollMessages(botToken: string) {
@@ -104,176 +141,22 @@ async function pollMessages(botToken: string) {
 
 async function handleTelegramMessage(botToken: string, message: any) {
   const chatId = message.chat.id;
-  const text = message.text || '';
+  let text = message.text || '';
   const userName = message.from?.first_name || 'Usuário';
 
+  // Mapear comandos Telegram para formato do bot unificado
+  const lower = text.toLowerCase();
+  if (lower === '/start') text = 'menu';
+  else if (lower === '/precos' || lower === 'preços') text = '1';
+  else if (lower === '/pedidos') text = '4';
+  else if (lower === '/ajuda' || lower === '/help') text = '5';
+
   try {
-    await prisma.conversation.create({
-      data: {
-        phoneNumber: `tg_${chatId}`,
-        clientName: userName,
-        message: text,
-        direction: 'incoming',
-        state: 'MENU',
-      },
-    });
-
-    const lower = text.toLowerCase();
-    const planLabels: Record<string, string> = { monthly: 'Mensal', quarterly: 'Trimestral', annual: 'Anual' };
-    const planOrder: Record<string, number> = { monthly: 1, quarterly: 2, annual: 3 };
-
-    // Callback de seleção de app (app_ID)
-    if (lower.startsWith('app_')) {
-      const appId = text.replace('app_', '');
-      const app = await prisma.app.findUnique({ where: { id: appId }, include: { plans: { where: { isActive: true } } } });
-      if (app) {
-        const sorted = [...app.plans].sort((a, b) => (planOrder[a.type.toLowerCase()] || 9) - (planOrder[b.type.toLowerCase()] || 9));
-        const buttons = sorted.map(p => ([{ text: `${planLabels[p.type.toLowerCase()] || p.type} - R$ ${p.price.toFixed(2)}`, callback_data: `plan_${p.id}_${app.id}` }]));
-        buttons.push([{ text: '🔙 Voltar ao Menu', callback_data: 'menu' }]);
-        const codes = await prisma.code.count({ where: { appId, status: 'available' } });
-        await sendTelegramMessage(botToken, chatId, `📱 *${app.name}*\n${app.description || ''}\n\n✅ ${codes} códigos disponíveis\n\n💰 *Escolha seu plano:*`, buttons);
-      }
-      return;
-    }
-
-    // Callback de seleção de plano (plan_PLANID_APPID)
-    if (lower.startsWith('plan_')) {
-      const parts = text.split('_');
-      const planId = parts[1];
-      const appId = parts[2];
-      const plan = await prisma.plan.findUnique({ where: { id: planId } });
-      const app = await prisma.app.findUnique({ where: { id: appId } });
-      if (plan && app) {
-        const available = await prisma.code.count({ where: { appId, planId, status: 'available' } });
-        if (available === 0) {
-          await sendTelegramMessage(botToken, chatId, '❌ *Estoque esgotado!* Tente outro plano.', [[{ text: '🔙 Menu', callback_data: 'menu' }]]);
-          return;
-        }
-        const order = await prisma.order.create({
-          data: { clientPhone: `tg_${chatId}`, clientName: userName, appId, planId, amount: plan.price, status: 'pending_payment' },
-        });
-        const config = await prisma.config.findMany({ where: { key: { in: ['pix_key', 'pix_name'] } } });
-        const pixKey = config.find(c => c.key === 'pix_key')?.value || '';
-        const pixName = config.find(c => c.key === 'pix_name')?.value || '';
-
-        // Tentar PIX automático Mercado Pago
-        let pixMsg = '';
-        const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
-        if (mpToken) {
-          try {
-            const res = await fetch('https://api.mercadopago.com/v1/payments', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${mpToken}`, 'X-Idempotency-Key': `tg-${order.id}` },
-              body: JSON.stringify({ transaction_amount: plan.price, description: `${app.name} - ${planLabels[plan.type.toLowerCase()] || plan.type}`, payment_method_id: 'pix', payer: { email: 'cliente@universalrecargas.com' }, external_reference: order.id }),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              const pixCode = data.point_of_interaction?.transaction_data?.qr_code || '';
-              if (pixCode) {
-                await prisma.order.update({ where: { id: order.id }, data: { paymentId: String(data.id) } });
-                pixMsg = 'mercadopago';
-                
-                // Enviar pedido criado
-                await sendTelegramMessage(botToken, chatId, `🎉 *PEDIDO CRIADO!*\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[plan.type.toLowerCase()] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: #${order.id.substring(0, 8)}\n\n✅ Pagamento confirmado automaticamente!`, [[{ text: '📦 Meus Pedidos', callback_data: 'pedidos' }], [{ text: '🔙 Menu', callback_data: 'menu' }]]);
-                
-                // Enviar PIX como mensagem separada (copiável)
-                await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ chat_id: chatId, text: `💳 PIX Copia e Cola:\n\n${pixCode}\n\n👆 Toque e segure para copiar`, parse_mode: undefined }),
-                });
-                
-                // Gerar e enviar QR Code como imagem
-                try {
-                  const QRCode = require('qrcode');
-                  const qrBuffer = await QRCode.toBuffer(pixCode, { width: 400, margin: 2 });
-                  const FormData = require('form-data') || null;
-                  const blob = new Blob([qrBuffer], { type: 'image/png' });
-                  const formData = new globalThis.FormData();
-                  formData.append('chat_id', String(chatId));
-                  formData.append('photo', blob, 'qrcode.png');
-                  formData.append('caption', '📱 Escaneie o QR Code para pagar');
-                  await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-                    method: 'POST',
-                    body: formData,
-                  });
-                } catch (qrErr) {
-                  console.error('[Telegram] Erro ao gerar QR:', qrErr);
-                }
-                return;
-              }
-            }
-          } catch {}
-        }
-        if (!pixMsg) {
-          pixMsg = `\n💳 *PIX Manual:*\n🔑 Chave: *${pixKey || 'Não configurada'}*\n👤 Nome: *${pixName || ''}*\n💵 Valor: *R$ ${plan.price.toFixed(2)}*`;
-        }
-
-        await sendTelegramMessage(botToken, chatId, `🎉 *PEDIDO CRIADO!*\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[plan.type.toLowerCase()] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: #${order.id.substring(0, 8)}${pixMsg}`, [[{ text: '📦 Meus Pedidos', callback_data: 'pedidos' }], [{ text: '🔙 Menu', callback_data: 'menu' }]]);
-      }
-      return;
-    }
-
-    // Menu / Start
-    if (lower === '/start' || lower === 'oi' || lower === 'olá' || lower === 'menu' || lower === 'voltar') {
-      const apps = await prisma.app.findMany({ where: { isActive: true } });
-      const buttons = apps.map(a => ([{ text: `📱 ${a.name}`, callback_data: `app_${a.id}` }]));
-      buttons.push([{ text: '💰 Preços', callback_data: 'precos' }, { text: '📦 Pedidos', callback_data: 'pedidos' }]);
-      buttons.push([{ text: '❓ Ajuda', callback_data: 'ajuda' }]);
-      await sendTelegramMessage(botToken, chatId, `👋 Olá *${userName}*!\n\n🎯 *UNIVERSAL RECARGAS*\nCódigos de recarga para streaming\n\n📱 *Escolha um app:*`, buttons);
-      return;
-    }
-
-    // Preços
-    if (lower === '/precos' || lower === 'precos' || lower === 'preços') {
-      const apps = await prisma.app.findMany({ where: { isActive: true }, include: { plans: { where: { isActive: true } } } });
-      let list = '';
-      for (const a of apps) {
-        const sorted = [...a.plans].sort((x, y) => (planOrder[x.type.toLowerCase()] || 9) - (planOrder[y.type.toLowerCase()] || 9));
-        const plans = sorted.map(p => `  💵 ${planLabels[p.type.toLowerCase()] || p.type}: R$ ${p.price.toFixed(2)}`).join('\n');
-        list += `\n📱 *${a.name}*\n${plans}\n`;
-      }
-      const buttons = apps.map(a => ([{ text: `📱 Comprar ${a.name}`, callback_data: `app_${a.id}` }]));
-      buttons.push([{ text: '🔙 Menu', callback_data: 'menu' }]);
-      await sendTelegramMessage(botToken, chatId, `💰 *TABELA DE PREÇOS*${list}`, buttons);
-      return;
-    }
-
-    // Pedidos
-    if (lower === '/pedidos' || lower === 'pedidos') {
-      const orders = await prisma.order.findMany({ where: { clientPhone: `tg_${chatId}` }, take: 5, orderBy: { createdAt: 'desc' }, include: { app: true, plan: true } });
-      if (orders.length === 0) {
-        await sendTelegramMessage(botToken, chatId, '📦 Você ainda não tem pedidos.', [[{ text: '📱 Comprar', callback_data: 'menu' }]]);
-        return;
-      }
-      const statusIcons: Record<string, string> = { code_sent: '✅ Enviado', paid: '💰 Pago', pending_payment: '⏳ Aguardando', cancelled: '❌ Cancelado' };
-      const list = orders.map(o => `• *${o.app.name}* (${planLabels[o.plan.type.toLowerCase()] || o.plan.type}) - R$ ${o.amount.toFixed(2)} - ${statusIcons[o.status] || o.status}`).join('\n');
-      await sendTelegramMessage(botToken, chatId, `📦 *SEUS PEDIDOS:*\n\n${list}`, [[{ text: '🔙 Menu', callback_data: 'menu' }]]);
-      return;
-    }
-
-    // Ajuda
-    if (lower === '/ajuda' || lower === 'ajuda' || lower === '/help') {
-      await sendTelegramMessage(botToken, chatId, '❓ *AJUDA*\n\n📱 Clique em um app para comprar\n💰 /precos - Ver preços\n📦 /pedidos - Seus pedidos\n🔙 /start - Menu principal', [[{ text: '🔙 Menu', callback_data: 'menu' }]]);
-      return;
-    }
-
-    // Buscar app por nome
-    const app = await prisma.app.findFirst({ where: { isActive: true, name: { contains: text, mode: 'insensitive' } } });
-    if (app) {
-      const plans = await prisma.plan.findMany({ where: { appId: app.id, isActive: true } });
-      const sorted = [...plans].sort((a, b) => (planOrder[a.type.toLowerCase()] || 9) - (planOrder[b.type.toLowerCase()] || 9));
-      const buttons = sorted.map(p => ([{ text: `${planLabels[p.type.toLowerCase()] || p.type} - R$ ${p.price.toFixed(2)}`, callback_data: `plan_${p.id}_${app.id}` }]));
-      buttons.push([{ text: '🔙 Menu', callback_data: 'menu' }]);
-      await sendTelegramMessage(botToken, chatId, `📱 *${app.name}*\n${app.description || ''}\n\n💰 *Escolha:*`, buttons);
-      return;
-    }
-
-    // Não entendeu
-    await sendTelegramMessage(botToken, chatId, '🤔 Não entendi. Use os botões abaixo:', [[{ text: '📱 Ver Apps', callback_data: 'menu' }], [{ text: '💰 Preços', callback_data: 'precos' }, { text: '❓ Ajuda', callback_data: 'ajuda' }]]);
-
+    const response = await processIncomingMessage(`tg_${chatId}`, text, userName, 'telegram');
+    await sendTelegramBotResponse(botToken, chatId, response);
   } catch (error) {
     console.error('[Telegram] Erro ao processar mensagem:', error);
+    await sendTelegramMessage(botToken, chatId, '❌ Ocorreu um erro. Tente novamente ou digite *menu* para voltar.');
   }
 }
 
