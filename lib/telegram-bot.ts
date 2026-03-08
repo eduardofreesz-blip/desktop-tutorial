@@ -171,7 +171,36 @@ async function handleTelegramMessage(botToken: string, message: any) {
               const pixCode = data.point_of_interaction?.transaction_data?.qr_code || '';
               if (pixCode) {
                 await prisma.order.update({ where: { id: order.id }, data: { paymentId: String(data.id) } });
-                pixMsg = `\n💳 *PIX COPIA E COLA:*\n\`\`\`${pixCode}\`\`\`\n\n📋 Copie e cole no app do banco\n✅ Pagamento confirmado automaticamente!`;
+                pixMsg = 'mercadopago';
+                
+                // Enviar pedido criado
+                await sendTelegramMessage(botToken, chatId, `🎉 *PEDIDO CRIADO!*\n\n📱 App: *${app.name}*\n📋 Plano: *${planLabels[plan.type.toLowerCase()] || plan.type}*\n💰 Valor: *R$ ${plan.price.toFixed(2)}*\n🆔 Pedido: #${order.id.substring(0, 8)}\n\n✅ Pagamento confirmado automaticamente!`, [[{ text: '📦 Meus Pedidos', callback_data: 'pedidos' }], [{ text: '🔙 Menu', callback_data: 'menu' }]]);
+                
+                // Enviar PIX como mensagem separada (copiável)
+                await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chat_id: chatId, text: `💳 PIX Copia e Cola:\n\n${pixCode}\n\n👆 Toque e segure para copiar`, parse_mode: undefined }),
+                });
+                
+                // Gerar e enviar QR Code como imagem
+                try {
+                  const QRCode = require('qrcode');
+                  const qrBuffer = await QRCode.toBuffer(pixCode, { width: 400, margin: 2 });
+                  const FormData = require('form-data') || null;
+                  const blob = new Blob([qrBuffer], { type: 'image/png' });
+                  const formData = new globalThis.FormData();
+                  formData.append('chat_id', String(chatId));
+                  formData.append('photo', blob, 'qrcode.png');
+                  formData.append('caption', '📱 Escaneie o QR Code para pagar');
+                  await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                    method: 'POST',
+                    body: formData,
+                  });
+                } catch (qrErr) {
+                  console.error('[Telegram] Erro ao gerar QR:', qrErr);
+                }
+                return;
               }
             }
           } catch {}
