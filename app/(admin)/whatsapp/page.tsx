@@ -283,28 +283,32 @@ export default function WhatsAppPage() {
                 Evolution API
               </CardTitle>
               <CardDescription>
-                Se você usa Evolution API (ex: http://187.77.34.61:8080), ative aqui. Se usa apenas a conexão Baileys abaixo, deixe desativado.
+                Use Evolution API ou Baileys (QR Code abaixo). Não use os dois ao mesmo tempo.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">Processar mensagens via Evolution API</p>
-                  <p className="text-sm text-muted-foreground">
-                    {evolutionEnabled ? 'Webhook ativo – mensagens do Evolution serão processadas' : 'Desativado – use a conexão Baileys (QR Code) abaixo'}
-                  </p>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <Switch
+                    checked={evolutionEnabled}
+                    onCheckedChange={handleEvolutionToggle}
+                    disabled={evolutionLoading}
+                  />
+                  <span className="font-medium">
+                    {evolutionEnabled ? 'Evolution ativo' : 'Evolution desativado'}
+                  </span>
                 </div>
-                <Switch
-                  checked={evolutionEnabled}
-                  onCheckedChange={handleEvolutionToggle}
-                  disabled={evolutionLoading}
-                />
+                <Button asChild>
+                  <a
+                    href="http://187.77.34.61:8080/manager/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Server className="w-4 h-4 mr-2" />
+                    Abrir Painel Evolution
+                  </a>
+                </Button>
               </div>
-              {evolutionEnabled && (
-                <p className="mt-2 text-sm text-amber-700">
-                  ⚠️ Com Evolution ativo, configure o webhook em Evolution API apontando para: <code className="bg-amber-100 px-1 rounded">/api/webhook/evolution</code>
-                </p>
-              )}
             </CardContent>
           </Card>
 
