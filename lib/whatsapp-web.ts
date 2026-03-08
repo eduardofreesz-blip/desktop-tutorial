@@ -487,23 +487,38 @@ async function handleBotMessage(phone: string, name: string, text: string): Prom
   // SELECIONAR PLANO
   // ═══════════════════════════════════
   if (state === "SELECT_PLAN") {
-    const planMap: Record<string, string> = { "1": "monthly", mensal: "monthly", "2": "quarterly", trimestral: "quarterly", "3": "annual", anual: "annual", monthly: "monthly", quarterly: "quarterly", annual: "annual" };
-    const planType = planMap[lower];
-
-    if (planType && context?.appId) {
-      const plan = await prisma.plan.findFirst({ 
-        where: { appId: context.appId, isActive: true, type: { equals: planType, mode: "insensitive" } }
-      }) || await prisma.plan.findFirst({ 
-        where: { appId: context.appId, isActive: true, type: { in: [planType, planType.toUpperCase(), planType.toLowerCase()] } }
+    let appId = context?.appId;
+    if (!appId) {
+      const convs = await prisma.conversation.findMany({
+        where: { phoneNumber: phone, direction: "outgoing", state: "SELECT_PLAN" },
+        orderBy: { createdAt: "desc" }, take: 5,
       });
-      const appData = await prisma.app.findUnique({ where: { id: context.appId } });
-      if (plan && appData) {
-        return await createOrder(prisma, phone, name, appData, plan);
+      for (const c of convs) {
+        const ctx = c.context as any;
+        if (ctx?.appId) { appId = ctx.appId; break; }
       }
     }
 
-    // Se digitou algo que não é plano, mostra os planos de novo
-    if (!lower.match(/^(menu|voltar|ajuda|preços|precos|pedidos|atendente)$/)) {
+    if (appId) {
+      const pOrder: Record<string, number> = { monthly: 1, quarterly: 2, annual: 3 };
+      const allPlans = await prisma.plan.findMany({ where: { appId, isActive: true } });
+      const sorted = allPlans.sort((a: any, b: any) => (pOrder[a.type.toLowerCase()] || 9) - (pOrder[b.type.toLowerCase()] || 9));
+      const appData = await prisma.app.findUnique({ where: { id: appId } });
+      let picked = null;
+
+      if (lower === "1" && sorted[0]) picked = sorted[0];
+      else if (lower === "2" && sorted[1]) picked = sorted[1];
+      else if (lower === "3" && sorted[2]) picked = sorted[2];
+      else if (lower.match(/^(mensal|mes)$/)) picked = sorted.find((p: any) => p.type.toLowerCase() === "monthly");
+      else if (lower.match(/^(trimestral|tri|trimestre)$/)) picked = sorted.find((p: any) => p.type.toLowerCase() === "quarterly");
+      else if (lower.match(/^(anual|ano|annual)$/)) picked = sorted.find((p: any) => p.type.toLowerCase() === "annual");
+
+      if (picked && appData) {
+        return await createOrder(prisma, phone, name, appData, picked);
+      }
+    }
+
+    if (!lower.match(/^(menu|voltar|ajuda|preços|precos|pedidos|atendente|oi|olá|ola)$/)) {
       return `❌ Opção inválida.\n\nDigite:\n  1️⃣ *mensal*\n  2️⃣ *trimestral*\n  3️⃣ *anual*\n\n🔙 *menu* para voltar`;
     }
   }
