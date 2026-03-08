@@ -224,7 +224,7 @@ export interface InteractiveMessage {
 // ==========================================
 // MENU PRINCIPAL - USA CONFIGS DO SITE
 // ==========================================
-async function formatMainMenu(clientName: string): Promise<InteractiveMessage[]> {
+export async function formatMainMenu(clientName: string): Promise<InteractiveMessage[]> {
   const saudacao = getSaudacao();
   const nome = clientName || 'Cliente';
   const welcomeImage = await getConfig('welcome_image');

@@ -462,14 +462,24 @@ async function handleBotMessageLegacy(phone: string, name: string, text: string)
   const saudacao = hora < 12 ? "Bom dia" : hora < 18 ? "Boa tarde" : "Boa noite";
 
   // ═══════════════════════════════════
-  // MENU PRINCIPAL / SAUDAÇÕES
+  // MENU PRINCIPAL / SAUDAÇÕES (usa formatMainMenu do bot-logic-web)
   // ═══════════════════════════════════
   if (lower === "menu" || lower === "voltar" || lower === "inicio" || lower === "0" || lower.match(/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite|oi!|e ai|opa|eai|opa!|oii|oie|hi|hello|start)$/)) {
-    const apps = await prisma.app.findMany({ where: { isActive: true } });
-    const appList = apps.map((a, i) => `  ${i + 1}️⃣  *${a.name}*`).join("\n");
-    const reply = `${saudacao}, *${name}*! 👋\n\n🎯 *UNIVERSAL RECARGAS*\n_Códigos de recarga para streaming_\n\n━━━━━━━━━━━━━━━━━━\n📱 *NOSSOS APPS:*\n━━━━━━━━━━━━━━━━━━\n${appList}\n\n━━━━━━━━━━━━━━━━━━\n📌 *Digite o número ou nome do app*\n\n_Outras opções:_\n💰 *preços* → Tabela completa\n📦 *pedidos* → Seus pedidos\n📞 *atendente* → Falar com humano\n❓ *ajuda* → Central de ajuda`;
-    await saveState(prisma, phone, "MENU", reply);
-    return reply;
+    try {
+      const { formatMainMenu } = await import("./bot-logic-web");
+      const menu = await formatMainMenu(name);
+      const arr = Array.isArray(menu) ? menu : [menu];
+      const first = arr[0] as Record<string, any>;
+      const txt = first?.text || first?.caption || "";
+      if (txt) await saveState(prisma, phone, "MENU", txt);
+      return arr;
+    } catch {
+      const apps = await prisma.app.findMany({ where: { isActive: true } });
+      const appList = apps.map((a, i) => `  ${i + 1}️⃣  *${a.name}*`).join("\n");
+      const reply = `${saudacao}, *${name}*! 👋\n\n*Digite o número da opção:*\n\n1️⃣ Comprar\n2️⃣ Suporte\n3️⃣ Instalação\n4️⃣ Meus Pedidos\n5️⃣ Sobre Nós\n\n0️⃣ Voltar`;
+      await saveState(prisma, phone, "MENU", reply);
+      return reply;
+    }
   }
 
   // ═══════════════════════════════════
