@@ -47,7 +47,6 @@ const menuItems = [
   { href: '/reports', label: 'Relatórios', icon: FileText },
   { href: '/users', label: 'Usuários', icon: Users },
   { href: '/panels', label: 'Painéis', icon: LayoutDashboard },
-  { href: '/openclaw', label: 'OpenClaw', icon: Bot, special: true },
   { href: '/settings/payments', label: 'Pagamentos', icon: CreditCard },
   { href: '/profile', label: 'Meu Perfil', icon: Users },
   { href: '/settings', label: 'Configurações', icon: Settings },
