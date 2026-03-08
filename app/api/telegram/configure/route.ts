@@ -10,7 +10,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
-    const { token } = await request.json();
+    const body = await request.json();
+    const token = body.token || body.botToken;
 
     if (!token) {
       return NextResponse.json(
