@@ -595,12 +595,22 @@ async function formatCodeDelivery(code: string, appName: string, planType: strin
 // ==========================================
 // PROCESSAR MENSAGEM RECEBIDA
 // ==========================================
+// Normaliza telefone para lookup consistente (evita 11999999999 vs 5511999999999)
+function normalizePhoneForLookup(phone: string): string {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return phone;
+  if (digits.startsWith('55') && digits.length >= 12) return digits;
+  if (digits.length >= 10 && digits.length <= 11) return '55' + digits;
+  return digits;
+}
+
 export async function processIncomingMessage(
   phoneNumber: string,
   messageText: string,
   clientNameOrPlatform?: string,
   platform: 'whatsapp' | 'telegram' = 'whatsapp'
 ): Promise<InteractiveMessage | InteractiveMessage[] | null> {
+  const phone = normalizePhoneForLookup(phoneNumber);
   let clientName = 'Cliente';
   if (clientNameOrPlatform === 'telegram' || clientNameOrPlatform === 'whatsapp') {
     platform = clientNameOrPlatform;
@@ -610,23 +620,22 @@ export async function processIncomingMessage(
   
   // OpenClaw: Verificar se deve usar como motor principal
   try {
-    // Verificar config se OpenClaw está habilitado como bot principal
     const openclawConfig = await prisma.config.findUnique({
       where: { key: 'openclaw_bot_enabled' }
     });
-    
     const useOpenClaw = openclawConfig?.value === 'true';
-    
+
     if (useOpenClaw) {
       const { handleWhatsAppMessage } = await import('@/lib/openclaw/whatsapp-admin');
-      const result = await handleWhatsAppMessage(phoneNumber, messageText, clientName);
+      const result = await handleWhatsAppMessage(phone, messageText);
       if (result && typeof result === 'string') {
         return { type: 'text', text: result };
       }
+      // Se retornou null, continuar com bot tradicional
     } else {
       // Apenas interceptar comandos admin do OpenClaw
       const { processAdminWhatsAppMessage } = await import('@/lib/openclaw/whatsapp-admin');
-      const openclawResult = await processAdminWhatsAppMessage(phoneNumber, messageText);
+      const openclawResult = await processAdminWhatsAppMessage(phone, messageText);
       if (openclawResult.handled) {
         // Mensagem processada pelo OpenClaw, não continuar
         return null;
@@ -639,9 +648,9 @@ export async function processIncomingMessage(
   
   const text = messageText.trim().toLowerCase();
 
-  // Buscar última conversa
+  // Buscar última conversa (usando phone normalizado)
   const lastConversation = await prisma.conversation.findFirst({
-    where: { phoneNumber },
+    where: { phoneNumber: phone },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -650,15 +659,15 @@ export async function processIncomingMessage(
 
   // Verificar se está em modo humano
   const isHumanMode = lastConversation?.humanMode === true;
-  
+
   // Salvar mensagem recebida
-  await saveMessage(phoneNumber, clientName, messageText, 'INBOUND', currentState, context);
+  await saveMessage(phone, clientName, messageText, 'INBOUND', currentState, context);
 
   // Se está em modo humano
   if (isHumanMode) {
     if (text === 'bot' || text === 'voltar bot' || text === 'ativar bot') {
       await prisma.conversation.updateMany({
-        where: { phoneNumber },
+        where: { phoneNumber: phone },
         data: { humanMode: false },
       });
       return formatMainMenu(clientName);
@@ -669,10 +678,10 @@ export async function processIncomingMessage(
   // ==========================================
   // COMANDOS DO MENU PRINCIPAL
   // ==========================================
-  
+
   // Voltar ao menu (0, menu, inicio, oi, olá)
   if (text === '0' || text === 'menu' || text === 'inicio' || text === 'oi' || text === 'olá' || text === 'ola' || text === 'hi' || text === 'hello') {
-    await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.MENU, {});
+    await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.MENU, {});
     return formatMainMenu(clientName);
   }
 
@@ -682,28 +691,28 @@ export async function processIncomingMessage(
   if (currentState === ConversationState.MENU || !currentState) {
     // 1 - Comprar Recargas
     if (text === '1' || text === 'comprar' || text === 'recargas') {
-      await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.SELECTING_APP, {});
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_APP, {});
       return formatAppsList();
     }
-    
+
     // 2 - Suporte Humanizado
     if (text === '2' || text === 'suporte' || text === 'atendente' || text === 'humano') {
       await prisma.conversation.updateMany({
-        where: { phoneNumber },
+        where: { phoneNumber: phone },
         data: { humanMode: true },
       });
-      await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.HUMAN_SUPPORT, {});
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.HUMAN_SUPPORT, {});
       return formatHumanSupport();
     }
-    
+
     // 3 - Instalação
     if (text === '3' || text === 'instalação' || text === 'instalar' || text === 'tutorial') {
       return formatInstallation();
     }
-    
+
     // 4 - Meus Pedidos
     if (text === '4' || text === 'pedidos' || text === 'meus pedidos') {
-      return formatMyOrders(phoneNumber);
+      return formatMyOrders(phone);
     }
     
     // 5 - Sobre Nós
@@ -726,14 +735,14 @@ export async function processIncomingMessage(
     }
     
     // Buscar perfil e histórico do cliente para contexto rico
-    const customerProfile = await getCustomerProfile(phoneNumber);
-    const conversationHistory = await getConversationHistory(phoneNumber, 8);
-    
+    const customerProfile = await getCustomerProfile(phone);
+    const conversationHistory = await getConversationHistory(phone, 8);
+
     // Buscar último pedido
     let lastOrder = undefined;
     if (customerProfile && customerProfile.totalOrders > 0) {
       const recentOrder = await prisma.order.findFirst({
-        where: { clientPhone: phoneNumber },
+        where: { clientPhone: phone },
         include: { app: true, plan: true },
         orderBy: { createdAt: 'desc' },
       });
@@ -756,10 +765,9 @@ export async function processIncomingMessage(
           a.name.toLowerCase().includes(entities.app.toLowerCase())
         );
         if (targetApp) {
-          // Salvar estado no banco
           await prisma.conversation.create({
             data: {
-              phoneNumber,
+              phoneNumber: phone,
               clientName,
               message: messageText,
               direction: 'incoming',
@@ -775,7 +783,7 @@ export async function processIncomingMessage(
     
     // Se pedido de status, mostrar pedidos
     if (intent === 'order_status' && confidence > 0.8 && customerProfile && customerProfile.totalOrders > 0) {
-      return await formatMyOrders(phoneNumber);
+      return await formatMyOrders(phone);
     }
     
     // Se problema/suporte, oferecer ajuda humana
@@ -792,18 +800,18 @@ export async function processIncomingMessage(
     
     // Verificar se é um telefone admin (pode executar ações)
     const adminPhones = (process.env.ADMIN_PHONES || '').split(',').map(p => p.trim()).filter(p => p);
-    const isAdmin = adminPhones.includes(phoneNumber) || adminPhones.some(p => phoneNumber.includes(p));
+    const isAdmin = adminPhones.includes(phone) || adminPhones.some(p => phone.includes(p));
     
     // Verificar se a mensagem requer ações do agente (criar, editar, deletar, etc.)
     const needsAgentAction = requiresAgentAction(messageText);
     
     // Se é admin e requer ação, usar agente completo
     if (isAdmin && needsAgentAction) {
-      console.log(`[BOT-AGENT] Admin detectado: ${phoneNumber} - Executando agente inteligente`);
-      
+      console.log(`[BOT-AGENT] Admin detectado: ${phone} - Executando agente inteligente`);
+
       try {
         const agentContext: AgentContext = {
-          phoneNumber,
+          phoneNumber: phone,
           customerName: clientName,
           isAdmin: true
         };
@@ -844,9 +852,9 @@ export async function processIncomingMessage(
           console.log(`[BOT-AGENT] Usuário comum solicitando informações via agente`);
           
           const agentContext: AgentContext = {
-            phoneNumber,
+            phoneNumber: phone,
             customerName: clientName,
-            isAdmin: false  // Limitado a consultas
+            isAdmin: false
           };
           
           const agentResult = await runAgent(messageText, agentContext);
@@ -857,7 +865,7 @@ export async function processIncomingMessage(
         
         const aiContext: AIContext = {
           customerName: clientName,
-          customerPhone: phoneNumber,
+          customerPhone: phone,
           lastOrder,
           conversationHistory: conversationHistory.map(c => ({
             role: c.role,
@@ -888,7 +896,7 @@ export async function processIncomingMessage(
     
     if (appIndex >= 0 && appIndex < apps.length) {
       const selectedApp = apps[appIndex];
-      await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PLAN, { appId: selectedApp.id });
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PLAN, { appId: selectedApp.id });
       
       // Enviar imagem do app se existir
       const messages: InteractiveMessage[] = [];
@@ -943,7 +951,7 @@ export async function processIncomingMessage(
       // Verificar se cupom está habilitado
       const showCoupon = await getConfig('show_coupon_option');
       if (showCoupon === 'true') {
-        await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.ENTERING_COUPON, { 
+        await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.ENTERING_COUPON, { 
           appId: context.appId, 
           planId: selectedPlan.id 
         });
@@ -957,7 +965,7 @@ export async function processIncomingMessage(
       // Verificar se cartão está habilitado - mostrar escolha de forma de pagamento
       const cardEnabled = await getConfig('card_enabled');
       if (cardEnabled === 'true') {
-        await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+        await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
           appId: context.appId, 
           planId: selectedPlan.id,
           discount: 0,
@@ -969,7 +977,7 @@ export async function processIncomingMessage(
       }
 
       // Ir direto para criar pedido PIX
-      return await createOrderAndGeneratePix(phoneNumber, clientName, app, selectedPlan, 0);
+      return await createOrderAndGeneratePix(phone, clientName, app, selectedPlan, 0);
     }
     
     return {
@@ -1004,7 +1012,7 @@ export async function processIncomingMessage(
 
       const cardEnabled = await getConfig('card_enabled');
       if (cardEnabled === 'true') {
-        await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+        await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
           appId: context.appId, 
           planId: context.planId,
           discount: 0,
@@ -1015,7 +1023,7 @@ export async function processIncomingMessage(
         };
       }
       
-      return await createOrderAndGeneratePix(phoneNumber, clientName, app, plan, 0);
+      return await createOrderAndGeneratePix(phone, clientName, app, plan, 0);
     }
     
     // Validar cupom
@@ -1081,7 +1089,7 @@ export async function processIncomingMessage(
     const cardEnabled = await getConfig('card_enabled');
     if (cardEnabled === 'true') {
       const finalPrice = Math.max(0, plan.price - discount);
-      await saveMessage(phoneNumber, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
+      await saveMessage(phone, clientName, '', 'OUTBOUND', ConversationState.SELECTING_PAYMENT_METHOD, { 
         appId: context.appId, 
         planId: context.planId,
         discount,
@@ -1093,7 +1101,7 @@ export async function processIncomingMessage(
       };
     }
 
-    return await createOrderAndGeneratePix(phoneNumber, clientName, app, plan, discount, coupon.code);
+    return await createOrderAndGeneratePix(phone, clientName, app, plan, discount, coupon.code);
   }
 
   // ==========================================
@@ -1113,7 +1121,7 @@ export async function processIncomingMessage(
       const plan = await prisma.plan.findUnique({ where: { id: context.planId } });
       if (!app || !plan) return formatMainMenu(clientName);
       const discount = context.discount ?? 0;
-      return await createOrderAndGeneratePix(phoneNumber, clientName, app, plan, discount, context.couponCode);
+      return await createOrderAndGeneratePix(phone, clientName, app, plan, discount, context.couponCode);
     }
 
     if (text === '2') {
@@ -1125,7 +1133,7 @@ export async function processIncomingMessage(
       const plan = await prisma.plan.findUnique({ where: { id: context.planId } });
       if (!app || !plan) return formatMainMenu(clientName);
       const discount = context.discount ?? 0;
-      return await createOrderAndSendCardLink(phoneNumber, clientName, app, plan, discount, context.couponCode);
+      return await createOrderAndSendCardLink(phone, clientName, app, plan, discount, context.couponCode);
     }
 
     return {
