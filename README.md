@@ -45,6 +45,26 @@ yarn dev
 
 Acesse: `http://localhost:3000`
 
+## Atalho para reativar rapidamente
+
+Se você precisa "colocar o projeto ativo novamente" em uma máquina nova, execute:
+
+```bash
+yarn reactivate
+```
+
+Esse comando:
+- cria `.env` a partir de `.env.example` (se necessário);
+- roda `prisma generate`;
+- roda `prisma db push`;
+- inicia o app com `yarn dev`.
+
+Opcionalmente, para semear dados de teste:
+
+```bash
+SEED=1 yarn reactivate
+```
+
 ## Comandos úteis
 
 ```bash
